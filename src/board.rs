@@ -21,9 +21,9 @@ impl GameState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Board {
-    board: [[Option<Piece>; 8]; 8],
+    board: [[Tile; 8]; 8],
 }
 
 // Boards are arranged internally so that white is on the bottom and black is on the top.
@@ -32,7 +32,7 @@ impl Board {
     /// Create a chessboard with no pieces on it.
     pub fn blank() -> Board {
         Board {
-            board: [[None; 8]; 8],
+            board: [[Tile(None); 8]; 8],
         }
     }
 
@@ -40,35 +40,29 @@ impl Board {
     pub fn default() -> Board {
         #[rustfmt::skip]
         let setup = [
-            "RNBQKBNR",
-            "PPPPPPPP",
-            "........",
-            "........",
-            "........",
-            "........",
-            "PPPPPPPP",
-            "RNBQKBNR",
+            "BR BN BB BQ BK BB BN BR",
+            "BP BP BP BP BP BP BP BP",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "WP WP WP WP WP WP WP WP",
+            "WR WN WB WQ WK WB WN WR",
         ];
         Board::from_string_array(setup)
     }
 
-    /// Create a board from a string array. The array must have 8 strings,
-    /// each of which must contain exactly 8 characters. Valid characters are
-    /// P - Pawn
-    /// N - Bishop
-    /// R - Rook
-    /// Q - Queen
-    /// K - King
-    /// All other characters are assumed to be "empty square"
-    /// White is at the bottom, black is at the top.
-    /// Note that the last bottom two rows are assumed to be white's and the
-    /// top two rows are assumed to be black's.
+    /// Create a board from a string array.
     pub fn from_string_array(array: [&str; 8]) -> Board {
         let mut board = Board::blank();
         for (i, row) in array.iter().enumerate() {
-            for (j, piece) in (*row).chars().enumerate() {
+            for (j, piece) in (*row).split_whitespace().enumerate() {
+                let color = match piece.chars().nth(0).unwrap() {
+                    'B' => Color::Black,
+                    _ => Color::White,
+                };
                 use PieceType::*;
-                let piece = match piece {
+                let piece = match piece.chars().nth(1).unwrap() {
                     'P' => Some(Pawn),
                     'N' => Some(Knight),
                     'B' => Some(Bishop),
@@ -77,12 +71,7 @@ impl Board {
                     'K' => Some(King),
                     _ => None,
                 };
-                let color = if i == 0 || i == 1 {
-                    Color::Black
-                } else {
-                    Color::White
-                };
-                board.board[i][j] = piece.map(|piece| Piece { piece, color });
+                board.board[i][j] = Tile(piece.map(|piece| Piece { piece, color }));
             }
         }
         board
@@ -99,31 +88,30 @@ impl Board {
         end: (i8, i8),
     ) -> Result<(), &'static str> {
         self.check_move(player, start, end)?;
-        let moved_piece: Option<Piece> = self.get(start);
+        let moved_piece = self.get(start);
         self.set(end, moved_piece);
-        self.set(start, None);
+        self.set(start, Tile(None));
         Ok(())
     }
 
     /// Check if the piece located at `start` can be moved to
     /// `end`. This function returns `Ok(())` if the move is
     /// valid and `Err(&str)` if the move is invalid.
-    fn check_move(
+    pub fn check_move(
         &self,
         player: Color,
         start: (i8, i8),
         end: (i8, i8),
     ) -> Result<(), &'static str> {
         let start_piece = self.get(start);
-        let end_piece = self.get(end);
-        use Color::*;
+        // let end_piece = self.get(end);
         use PieceType::*;
 
-        if start_piece == None {
+        if start_piece.0.is_none() {
             return Err("You aren't Roxy");
         }
 
-        let start_piece = start_piece.unwrap();
+        let start_piece = start_piece.0.unwrap();
         // You can't move a piece that isn't yours
         if start_piece.color != player {
             return Err("You aren't Caliborn");
@@ -145,15 +133,29 @@ impl Board {
     }
 
     /// Gets the piece located at the coordinates
-    pub fn get(&self, coord: (i8, i8)) -> Option<Piece> {
+    pub fn get(&self, coord: (i8, i8)) -> Tile {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
         self.board[(7 - coord.1) as usize][coord.0 as usize]
     }
 
     /// Sets the piece located at the coordinates
-    fn set(&mut self, coord: (i8, i8), piece: Option<Piece>) {
+    fn set(&mut self, coord: (i8, i8), piece: Tile) {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
         self.board[(7 - coord.1) as usize][coord.0 as usize] = piece;
+    }
+}
+
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "         BLACK")?;
+        for row in &self.board {
+            for piece in row {
+                write!(f, "{} ", piece)?;
+            }
+            writeln!(f, "")?;
+        }
+        writeln!(f, "         WHITE")?;
+        Ok(())
     }
 }
 
@@ -161,7 +163,7 @@ fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     let mut valid_end_pos = Vec::new();
     let forwards = (pos.0, pos.1 + color.direction());
     if on_board(forwards) {
-        if board.get(forwards).is_none() {
+        if board.get(forwards).0.is_none() {
             valid_end_pos.push(forwards);
         }
     }
@@ -171,17 +173,13 @@ fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
         (pos.0 - 1, pos.1 + color.direction()),
     ] {
         if on_board(diagonal) {
-            match board.get(diagonal) {
+            match board.get(diagonal).0 {
                 Some(piece) if piece.color != color => valid_end_pos.push(diagonal),
                 _ => {}
             }
         }
     }
     valid_end_pos
-}
-
-fn on_board(pos: (i8, i8)) -> bool {
-    0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
 }
 
 fn check_knight(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
@@ -192,7 +190,7 @@ fn check_knight(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
         if !on_board(end_pos) {
             continue;
         }
-        match board.get(end_pos) {
+        match board.get(end_pos).0 {
             Some(piece) if piece.color != color => valid_end_pos.push(end_pos),
             None => valid_end_pos.push(end_pos),
             _ => {}
@@ -209,8 +207,8 @@ fn check_bishop(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     let line_of_sights: Vec<Vec<(i8, i8)>> = get_los_bishop(pos);
     for los in line_of_sights {
         for end_pos in los {
-            let end_piece = board.get(end_pos);
-            if end_piece == None {
+            let end_piece = board.get(end_pos).0;
+            if end_piece.is_none() {
                 valid_end_pos.push(end_pos);
             } else if let Some(piece) = end_piece {
                 if piece.color != color {
@@ -233,8 +231,8 @@ fn check_rook(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     let line_of_sights: Vec<Vec<(i8, i8)>> = get_los_rook(pos);
     for los in line_of_sights {
         for end_pos in los {
-            let end_piece = board.get(end_pos);
-            if end_piece == None {
+            let end_piece = board.get(end_pos).0;
+            if end_piece.is_none() {
                 valid_end_pos.push(end_pos);
             } else if let Some(piece) = end_piece {
                 if piece.color != color {
@@ -257,8 +255,8 @@ fn check_queen(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     let line_of_sights: Vec<Vec<(i8, i8)>> = [get_los_bishop(pos), get_los_rook(pos)].concat();
     for los in line_of_sights {
         for end_pos in los {
-            let end_piece = board.get(end_pos);
-            if end_piece == None {
+            let end_piece = board.get(end_pos).0;
+            if end_piece.is_none() {
                 valid_end_pos.push(end_pos);
             } else if let Some(piece) = end_piece {
                 if piece.color != color {
@@ -271,6 +269,7 @@ fn check_queen(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
 
     valid_end_pos
 }
+
 fn check_king(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     let mut valid_end_pos = Vec::new();
     let deltas = get_move_deltas(PieceType::King).unwrap();
@@ -279,30 +278,13 @@ fn check_king(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
         if !on_board(end_pos) {
             continue;
         }
-        match board.get(end_pos) {
+        match board.get(end_pos).0 {
             Some(piece) if piece.color != color => valid_end_pos.push(end_pos),
             None => valid_end_pos.push(end_pos),
             _ => {}
         }
     }
     valid_end_pos
-}
-
-impl fmt::Display for Board {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "         BLACK")?;
-        for row in &self.board {
-            for piece in row {
-                match piece {
-                    Some(piece) => write!(f, "{}{} ", piece.color, piece.piece)?,
-                    None => write!(f, ".. ")?,
-                }
-            }
-            writeln!(f, "")?;
-        }
-        writeln!(f, "         WHITE")?;
-        Ok(())
-    }
 }
 
 fn get_los_rook(pos: (i8, i8)) -> Vec<Vec<(i8, i8)>> {
@@ -312,7 +294,7 @@ fn get_los_rook(pos: (i8, i8)) -> Vec<Vec<(i8, i8)>> {
     }
 
     let mut los_left = Vec::new();
-    for i in 0..pos.0 {
+    for i in (0..pos.0).rev() {
         los_left.push((i, pos.1));
     }
 
@@ -322,7 +304,7 @@ fn get_los_rook(pos: (i8, i8)) -> Vec<Vec<(i8, i8)>> {
     }
 
     let mut los_down = Vec::new();
-    for i in 0..pos.1 {
+    for i in (0..pos.1).rev() {
         los_down.push((pos.0, i));
     }
     return vec![los_up, los_down, los_right, los_left];
@@ -335,22 +317,42 @@ fn get_los_bishop(pos: (i8, i8)) -> Vec<Vec<(i8, i8)>> {
     }
 
     let mut los_down_left = Vec::new();
-    for (i, j) in (0..pos.0).zip(0..pos.1) {
+    for (i, j) in ((0..pos.0).rev()).zip((0..pos.1).rev()) {
         los_down_left.push((i, j));
     }
 
     let mut los_up_left = Vec::new();
-    for (i, j) in (0..pos.0).zip(pos.1 + 1..8) {
+    for (i, j) in ((0..pos.0).rev()).zip(pos.1 + 1..8) {
         los_up_left.push((i, j));
     }
 
     let mut los_down_right = Vec::new();
-    for (i, j) in (pos.0 + 1..8).zip(0..pos.1) {
+    for (i, j) in (pos.0 + 1..8).zip((0..pos.1).rev()) {
         los_down_right.push((i, j));
     }
-    // TODO finish this function
+
     return vec![los_up_right, los_up_left, los_down_right, los_down_left];
 }
+
+fn on_board(pos: (i8, i8)) -> bool {
+    0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
+}
+
+/// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
+/// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub struct Tile(Option<Piece>);
+
+impl fmt::Display for Tile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            Some(piece) => write!(f, "{}{}", piece.color, piece.piece),
+            None => write!(f, ".."),
+        }
+    }
+}
+
+/// A chess piece which has a color and the type of piece it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Piece {
     color: Color,
@@ -392,7 +394,7 @@ pub enum PieceType {
 }
 
 /// Return a list of valid movement deltas (offsets from the piece) given a
-/// PieceType. Move deltas take into account the piece's color.
+/// PieceType. Move deltas DO NOT take into account the piece's color.
 /// This function returns Err on Rook, Bishop, and Queen
 fn get_move_deltas(piece: PieceType) -> Result<Vec<(i8, i8)>, &'static str> {
     use PieceType::*;
