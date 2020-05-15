@@ -118,11 +118,15 @@ impl Board {
         }
         let valid_end_spots: Vec<(i8, i8)> = match start_piece.piece {
             Pawn => check_pawn(self, start, player),
-            Knight => check_knight(self, start, player),
-            Bishop => check_bishop(self, start, player),
-            Rook => check_rook(self, start, player),
-            Queen => check_queen(self, start, player),
-            King => check_king(self, start, player),
+            Knight | King => check_jump_piece(
+                self,
+                start,
+                player,
+                get_move_deltas(start_piece.piece).unwrap(),
+            ),
+            Bishop | Rook | Queen => {
+                check_line_of_sight_piece(self, start, player, get_los(start_piece.piece).unwrap())
+            }
         };
 
         if valid_end_spots.contains(&end) {
@@ -182,102 +186,24 @@ fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     valid_end_pos
 }
 
-fn check_knight(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
+/// Get a list of valid locations the "jump" piece may move or capture to.
+/// The `move_deltas` is a list of offsets that the piece may potenitally move
+/// to. The piece may actually move there if the Tile is on the board and is
+/// Either unoccupied (a move) or is a piece of the opposite color (a capture).
+fn check_jump_piece(
+    board: &Board,
+    pos: (i8, i8),
+    color: Color,
+    move_deltas: Vec<(i8, i8)>,
+) -> Vec<(i8, i8)> {
     let mut valid_end_pos = Vec::new();
-    let deltas = get_move_deltas(PieceType::Knight).unwrap();
-    for delta in deltas {
+    for delta in move_deltas {
         let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
         if !on_board(end_pos) {
             continue;
         }
-        match board.get(end_pos).0 {
-            Some(piece) if piece.color != color => valid_end_pos.push(end_pos),
-            None => valid_end_pos.push(end_pos),
-            _ => {}
-        }
-    }
-    valid_end_pos
-}
-fn check_bishop(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
-    // from the bishop's position, scan in each cardinal direction until you either
-    // hit the end of the board, or hit a piece
-    // if the color of the piece matches `color`, then don't include that space
-    // otherwise, do include it (you can capture the spot)
-    let mut valid_end_pos = Vec::new();
-    let line_of_sights: Vec<Vec<(i8, i8)>> = get_los_bishop(pos);
-    for los in line_of_sights {
-        for end_pos in los {
-            let end_piece = board.get(end_pos).0;
-            if end_piece.is_none() {
-                valid_end_pos.push(end_pos);
-            } else if let Some(piece) = end_piece {
-                if piece.color != color {
-                    valid_end_pos.push(end_pos);
-                }
-                break;
-            }
-        }
-    }
-
-    valid_end_pos
-}
-
-fn check_rook(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
-    // from the rook's position, scan in each cardinal direction until you either
-    // hit the end of the board, or hit a piece
-    // if the color of the piece matches `color`, then don't include that space
-    // otherwise, do include it (you can capture the spot)
-    let mut valid_end_pos = Vec::new();
-    let line_of_sights: Vec<Vec<(i8, i8)>> = get_los_rook(pos);
-    for los in line_of_sights {
-        for end_pos in los {
-            let end_piece = board.get(end_pos).0;
-            if end_piece.is_none() {
-                valid_end_pos.push(end_pos);
-            } else if let Some(piece) = end_piece {
-                if piece.color != color {
-                    valid_end_pos.push(end_pos);
-                }
-                break;
-            }
-        }
-    }
-
-    valid_end_pos
-}
-
-fn check_queen(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
-    // from the queen's position, scan in each cardinal direction until you either
-    // hit the end of the board, or hit a piece
-    // if the color of the piece matches `color`, then don't include that space
-    // otherwise, do include it (you can capture the spot)
-    let mut valid_end_pos = Vec::new();
-    let line_of_sights: Vec<Vec<(i8, i8)>> = [get_los_bishop(pos), get_los_rook(pos)].concat();
-    for los in line_of_sights {
-        for end_pos in los {
-            let end_piece = board.get(end_pos).0;
-            if end_piece.is_none() {
-                valid_end_pos.push(end_pos);
-            } else if let Some(piece) = end_piece {
-                if piece.color != color {
-                    valid_end_pos.push(end_pos);
-                }
-                break;
-            }
-        }
-    }
-
-    valid_end_pos
-}
-
-fn check_king(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
-    let mut valid_end_pos = Vec::new();
-    let deltas = get_move_deltas(PieceType::King).unwrap();
-    for delta in deltas {
-        let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
-        if !on_board(end_pos) {
-            continue;
-        }
+        // A piece may actually move to end_pos if the location is unoccupied
+        // or contains a piece of the opposite color.
         match board.get(end_pos).0 {
             Some(piece) if piece.color != color => valid_end_pos.push(end_pos),
             None => valid_end_pos.push(end_pos),
@@ -287,48 +213,76 @@ fn check_king(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     valid_end_pos
 }
 
-fn get_los_rook(pos: (i8, i8)) -> Vec<Vec<(i8, i8)>> {
+/// Get a list of valid locations the "LoS" piece may move or capture to.
+/// The `lines_of_sight` is consists of lines of sights. A line of sight is a
+/// list of move deltas arranged in the order that the piece can "see" (ie: for)
+/// Rooks, the line of sight starts closest to the Rook, and goes away from it
+/// in an orthogonal direction. Lines of sight end on the first piece of the opposite
+/// color or just before the first piece of the same color.
+fn check_line_of_sight_piece(
+    board: &Board,
+    pos: (i8, i8),
+    color: Color,
+    line_of_sights: Vec<Vec<(i8, i8)>>,
+) -> Vec<(i8, i8)> {
+    let mut valid_end_pos = Vec::new();
+    for los in line_of_sights {
+        for delta in los {
+            let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
+
+            if !on_board(end_pos) {
+                break;
+            }
+
+            let end_piece = board.get(end_pos).0;
+            if end_piece.is_none() {
+                valid_end_pos.push(end_pos);
+            } else if let Some(piece) = end_piece {
+                if piece.color != color {
+                    valid_end_pos.push(end_pos);
+                }
+                break;
+            }
+        }
+    }
+
+    valid_end_pos
+}
+
+fn get_los(piece: PieceType) -> Result<Vec<Vec<(i8, i8)>>, &'static str> {
+    use PieceType::*;
+    match piece {
+        Rook => Ok(get_los_rook()),
+        Bishop => Ok(get_los_bishop()),
+        Queen => Ok([get_los_rook(), get_los_bishop()].concat()),
+        _ => Err("Only Rooks, Bishops, and Queens are line of sight pieces"),
+    }
+}
+
+fn get_los_rook() -> Vec<Vec<(i8, i8)>> {
     let mut los_right = Vec::new();
-    for i in pos.0 + 1..8 {
-        los_right.push((i, pos.1));
-    }
-
     let mut los_left = Vec::new();
-    for i in (0..pos.0).rev() {
-        los_left.push((i, pos.1));
-    }
-
     let mut los_up = Vec::new();
-    for i in pos.1 + 1..8 {
-        los_up.push((pos.0, i));
-    }
-
     let mut los_down = Vec::new();
-    for i in (0..pos.1).rev() {
-        los_down.push((pos.0, i));
+    for i in 1..8 {
+        los_right.push((i, 0));
+        los_left.push((-i, 0));
+        los_up.push((0, i));
+        los_down.push((0, -i));
     }
     return vec![los_up, los_down, los_right, los_left];
 }
 
-fn get_los_bishop(pos: (i8, i8)) -> Vec<Vec<(i8, i8)>> {
+fn get_los_bishop() -> Vec<Vec<(i8, i8)>> {
     let mut los_up_right = Vec::new();
-    for (i, j) in (pos.0 + 1..8).zip(pos.1 + 1..8) {
-        los_up_right.push((i, j));
-    }
-
-    let mut los_down_left = Vec::new();
-    for (i, j) in ((0..pos.0).rev()).zip((0..pos.1).rev()) {
-        los_down_left.push((i, j));
-    }
-
     let mut los_up_left = Vec::new();
-    for (i, j) in ((0..pos.0).rev()).zip(pos.1 + 1..8) {
-        los_up_left.push((i, j));
-    }
-
     let mut los_down_right = Vec::new();
-    for (i, j) in (pos.0 + 1..8).zip((0..pos.1).rev()) {
-        los_down_right.push((i, j));
+    let mut los_down_left = Vec::new();
+    for i in 1..8 {
+        los_up_right.push((i, i));
+        los_up_left.push((-i, i));
+        los_down_right.push((i, -i));
+        los_down_left.push((-i, -i));
     }
 
     return vec![los_up_right, los_up_left, los_down_right, los_down_left];
