@@ -15,7 +15,7 @@ pub fn read_string_from_stdin(message: Option<String>) -> String {
 
 fn main() {
     #[rustfmt::skip]
-    let setup = [
+    let setup = vec![
         ".. .. .. .. .. .. .. ..",
         ".. .. .. WP .. .. BP ..",
         ".. .. .. .. .. .. .. ..",
@@ -25,7 +25,7 @@ fn main() {
         ".. BN .. .. .. .. .. ..",
         ".. .. .. .. .. .. WQ ..",
     ];
-    let mut board = Board::from_string_array(setup);
+    let mut board = Board::from_string_vec(setup);
     loop {
         println!("{}", board);
         println!("Select a piece:");

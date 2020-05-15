@@ -39,7 +39,7 @@ impl Board {
     /// Create a standard Chess board.
     pub fn default() -> Board {
         #[rustfmt::skip]
-        let setup = [
+        let setup = vec![
             "BR BN BB BQ BK BB BN BR",
             "BP BP BP BP BP BP BP BP",
             ".. .. .. .. .. .. .. ..",
@@ -49,13 +49,16 @@ impl Board {
             "WP WP WP WP WP WP WP WP",
             "WR WN WB WQ WK WB WN WR",
         ];
-        Board::from_string_array(setup)
+        Board::from_string_vec(setup)
     }
 
-    /// Create a board from a string array.
-    pub fn from_string_array(array: [&str; 8]) -> Board {
+    /// Create a board from a string array. The array assumes that each string
+    /// can be split into exactly 8 two character substrings, each either being
+    /// "B" or "W" in the first character and a P, N, B, R, Q, or K in the
+    /// second character. Anything else is treated as None.
+    pub fn from_string_vec(str_board: Vec<&str>) -> Board {
         let mut board = Board::blank();
-        for (i, row) in array.iter().enumerate() {
+        for (i, row) in str_board.iter().enumerate() {
             for (j, piece) in (*row).split_whitespace().enumerate() {
                 let color = match piece.chars().nth(0).unwrap() {
                     'B' => Color::Black,
@@ -71,7 +74,9 @@ impl Board {
                     'K' => Some(King),
                     _ => None,
                 };
-                board.board[i][j] = Tile(piece.map(|piece| Piece { piece, color }));
+                let x = j;
+                let y = i + (8 - str_board.len());
+                board.board[y][x] = Tile(piece.map(|piece| Piece { piece, color }));
             }
         }
         board
@@ -104,8 +109,6 @@ impl Board {
         end: (i8, i8),
     ) -> Result<(), &'static str> {
         let start_piece = self.get(start);
-        // let end_piece = self.get(end);
-        use PieceType::*;
 
         if start_piece.0.is_none() {
             return Err("You aren't Roxy");
@@ -116,18 +119,7 @@ impl Board {
         if start_piece.color != player {
             return Err("You aren't Caliborn");
         }
-        let valid_end_spots: Vec<(i8, i8)> = match start_piece.piece {
-            Pawn => check_pawn(self, start, player),
-            Knight | King => check_jump_piece(
-                self,
-                start,
-                player,
-                get_move_deltas(start_piece.piece).unwrap(),
-            ),
-            Bishop | Rook | Queen => {
-                check_line_of_sight_piece(self, start, player, get_los(start_piece.piece).unwrap())
-            }
-        };
+        let valid_end_spots: Vec<(i8, i8)> = get_move_list(self, start);
 
         if valid_end_spots.contains(&end) {
             Ok(())
@@ -146,6 +138,26 @@ impl Board {
     fn set(&mut self, coord: (i8, i8), piece: Tile) {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
         self.board[(7 - coord.1) as usize][coord.0 as usize] = piece;
+    }
+}
+
+fn get_move_list(board: &Board, coord: (i8, i8)) -> Vec<(i8, i8)> {
+    let piece = board.get(coord).0;
+    use PieceType::*;
+    match piece {
+        None => vec![],
+        Some(piece) => match piece.piece {
+            Pawn => check_pawn(board, coord, piece.color),
+            Knight | King => check_jump_piece(
+                board,
+                coord,
+                piece.color,
+                get_move_deltas(piece.piece).unwrap(),
+            ),
+            Bishop | Rook | Queen => {
+                check_line_of_sight_piece(board, coord, piece.color, get_los(piece.piece).unwrap())
+            }
+        },
     }
 }
 
@@ -388,6 +400,353 @@ impl fmt::Display for PieceType {
             Rook => write!(f, "R"),
             Queen => write!(f, "Q"),
             King => write!(f, "K"),
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::hash::Hash;
+    use std::iter::FromIterator;
+
+    use super::*;
+
+    #[test]
+    fn test_from_string_vec() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. WP .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let board = Board::from_string_vec(board);
+        let mut expected = Board::blank();
+        expected.set(
+            (3, 3),
+            Tile(Some(Piece {
+                piece: PieceType::Pawn,
+                color: Color::White,
+            })),
+        );
+        println!("real\n{}\nexpected\n{}", board, expected);
+        assert_eq!(board, expected);
+    }
+
+    #[test]
+    fn test_from_string_vec_small() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. .. WP",
+            ".. .. .. ..",
+            ".. .. .. ..",
+            ".. .. .. ..",
+        ];
+        let board = Board::from_string_vec(board);
+        let mut expected = Board::blank();
+        expected.set(
+            (3, 3),
+            Tile(Some(Piece {
+                piece: PieceType::Pawn,
+                color: Color::White,
+            })),
+        );
+        println!("real\n{}\nexpected\n{}", board, expected);
+        assert_eq!(board, expected);
+    }
+
+    #[test]
+    fn test_from_string_vec_smallest() {
+        let board = vec!["WP"];
+        let board = Board::from_string_vec(board);
+        let mut expected = Board::blank();
+        expected.set(
+            (0, 0),
+            Tile(Some(Piece {
+                piece: PieceType::Pawn,
+                color: Color::White,
+            })),
+        );
+        println!("real\n{}\nexpected\n{}", board, expected);
+        assert_eq!(board, expected);
+    }
+
+    #[test]
+    fn test_pawn_move() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. ..",
+            ".. .. ..",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. ..",
+            ".. ## ..",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        assert_valid_movement(board, (1, 1), expected);
+    }
+
+    #[test]
+    fn test_pawn_move_black() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. ..",
+            ".. BP ..",
+            ".. .. ..",
+            ".. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. ..",
+            ".. BP ..",
+            ".. ## ..",
+            ".. .. ..",
+        ];
+        assert_valid_movement(board, (1, 2), expected);
+    }
+
+    #[test]
+    fn test_pawn_capture() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. ..",
+            "BN BP BQ",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. ..",
+            "## .. ##",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        assert_valid_movement(board, (1, 1), expected);
+    }
+
+    #[test]
+    fn test_pawn_cant_move() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. ..",
+            "WN BK WQ",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. ..",
+            ".. .. ..",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        assert_valid_movement(board, (1, 1), expected);
+    }
+
+    #[test]
+    fn test_king() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. ..",
+            ".. WK ..",
+            ".. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            "## ## ##",
+            "## WK ##",
+            "## ## ##",
+        ];
+        assert_valid_movement(board, (1, 1), expected);
+    }
+
+    #[test]
+    fn test_king_capture() {
+        #[rustfmt::skip]
+        let board = vec![
+            "WP BP BP",
+            "BP WK WP",
+            "WP WP BP",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            "WP ## ##",
+            "## WK WP",
+            "WP WP ##",
+        ];
+        assert_valid_movement(board, (1, 1), expected);
+    }
+
+    #[test]
+    fn test_king_capture_black() {
+        #[rustfmt::skip]
+        let board = vec![
+            "WP BP BP",
+            "BP BK WP",
+            "WP WP BP",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            "## BP BP",
+            "BP WK ##",
+            "## ## BP",
+        ];
+        assert_valid_movement(board, (1, 1), expected);
+    }
+    #[test]
+    fn test_knight() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. .. BP ..",
+            ".. .. .. .. BP",
+            ".. .. WN .. ..",
+            "BP .. .. .. ..",
+            ".. BP .. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. ## .. ## ..",
+            "## .. .. .. ##",
+            ".. .. WN .. ..",
+            "## .. .. .. ##",
+            ".. ## .. ## ..",
+        ];
+        assert_valid_movement(board, (2, 2), expected);
+    }
+
+    #[test]
+    fn test_knight_jump() {
+        #[rustfmt::skip]
+        let board = vec![
+            "WP WP WP .. WP",
+            "WP WP WP WP ..",
+            "WP WP WN WP WP",
+            "BP WP WP WP WP",
+            "WP BP WP WP WP",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. .. ## ..",
+            ".. .. .. .. ##",
+            ".. .. WN .. ..",
+            "## .. .. .. ..",
+            ".. ## .. .. ..",
+        ];
+        assert_valid_movement(board, (2, 2), expected);
+    }
+
+    #[test]
+    fn test_rook_los() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. WR .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            "## ## ## WR ## ## ## ##",
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+        ];
+        assert_valid_movement(board, (3, 3), expected);
+    }
+
+    #[test]
+    fn test_rook_los_blocked() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. WP .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. BP .. WR BP .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. WP .. .. .. ..",
+        ];
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            ".. ## ## WR ## .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. ## .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        assert_valid_movement(board, (3, 3), expected);
+    }
+
+    fn assert_valid_movement(board: Vec<&str>, coord: (i8, i8), expected: Vec<&str>) {
+        let board = Board::from_string_vec(board);
+        let expected = to_move_list(expected);
+        let move_list = get_move_list(&board, coord);
+        println!("Board\n{}", board);
+        println!("Actual Move List");
+        print_move_list(&move_list);
+        println!("Expected Move List");
+        print_move_list(&expected);
+
+        let mut move_list_counts = HashMap::new();
+        for ele in move_list {
+            let entry = move_list_counts.entry(ele).or_insert(0);
+            *entry += 1;
+        }
+
+        let mut expected_counts = HashMap::new();
+        for ele in expected {
+            let entry = expected_counts.entry(ele).or_insert(0);
+            *entry += 1;
+        }
+
+        assert_eq!(move_list_counts, expected_counts);
+    }
+
+    /// Create list of valid moves given a string board
+    fn to_move_list(array: Vec<&str>) -> Vec<(i8, i8)> {
+        let mut move_list = Vec::new();
+        for (y, row) in array.iter().enumerate() {
+            for (x, tile) in (*row).split_whitespace().enumerate() {
+                if tile.starts_with("#") {
+                    move_list.push((x as i8, ((array.len() - 1) - y) as i8));
+                };
+            }
+        }
+        move_list
+    }
+
+    fn print_move_list(move_list: &Vec<(i8, i8)>) {
+        for i in 0..8 {
+            for j in 0..8 {
+                let x: i8 = j;
+                let y = 7 - i;
+                if move_list.contains(&(x, y)) {
+                    print!("## ");
+                } else {
+                    print!(".. ");
+                }
+            }
+            println!("");
         }
     }
 }
