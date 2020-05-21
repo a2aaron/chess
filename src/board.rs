@@ -26,7 +26,8 @@ impl BoardState {
 
     pub fn take_turn(&mut self, start: (i8, i8), end: (i8, i8)) -> Result<(), &'static str> {
         use Color::*;
-        self.board.move_piece(self.current_player, start, end)?;
+        self.board.check_move(self.current_player, start, end)?;
+        self.board.move_piece(start, end);
         self.current_player = match self.current_player {
             White => Black,
             Black => White,
@@ -96,21 +97,12 @@ impl Board {
         board
     }
 
-    /// Attempt to move the piece located at `start` to
-    /// `end`. This function returns `Ok(())` if the move is
-    /// valid (and updates the board correspondingly) and `Err(&str)` if the move
-    /// fails (and does not alter the board).
-    pub fn move_piece(
-        &mut self,
-        player: Color,
-        start: (i8, i8),
-        end: (i8, i8),
-    ) -> Result<(), &'static str> {
-        self.check_move(player, start, end)?;
+    /// Moves the piece located at `start` to `end`. This function always moves
+    /// the piece, even if it would not be actually legal to do so in a real game.
+    pub fn move_piece(&mut self, start: (i8, i8), end: (i8, i8)) {
         let moved_piece = self.get(start);
         self.set(end, moved_piece);
         self.set(start, Tile(None));
-        Ok(())
     }
 
     /// Check if the piece located at `start` can be moved to

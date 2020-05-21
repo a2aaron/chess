@@ -54,6 +54,7 @@ fn main() {
         mesh: grid.to_mesh(&mut ctx),
         grid: grid,
         last_mouse_down_pos: None,
+        last_mouse_up_pos: None,
     };
 
     // Run!
@@ -93,12 +94,7 @@ impl Grid {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, self.color);
                 } else if Some((i, j)) == self.dragging {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, green);
-                } else if self
-                    .drop_locations
-                    .as_ref()
-                    .map(|vec| vec.contains(&(i, j)))
-                    .unwrap_or(false)
-                {
+                } else if contains(&self.drop_locations, &(i, j)) {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, blue);
                 } else {
                     mesh.rectangle(draw_mode, rect, self.color);
@@ -126,6 +122,13 @@ impl Grid {
         let grid_y = (offset_coords.y / self.square_size).floor() as i8;
         (grid_x, grid_y)
     }
+
+    fn move_piece(&mut self, last_mouse_down_pos: mint::Point2<f32>) {
+        let drop_loc = self.to_grid_coord(last_mouse_down_pos);
+        if contains(&self.drop_locations, &drop_loc) {
+            self.board.move_piece(self.dragging.unwrap(), drop_loc);
+        }
+    }
 }
 
 fn minus(a: mint::Point2<f32>, b: mint::Point2<f32>) -> mint::Point2<f32> {
@@ -135,10 +138,21 @@ fn minus(a: mint::Point2<f32>, b: mint::Point2<f32>) -> mint::Point2<f32> {
     }
 }
 
+fn contains<T, V>(vec: &Option<V>, thing: &T) -> bool
+where
+    T: Eq,
+    V: AsRef<[T]>,
+{
+    vec.as_ref()
+        .map(|vec| vec.as_ref().contains(thing))
+        .unwrap_or(false)
+}
+
 struct GameState {
     grid: Grid,
     mesh: graphics::Mesh,
     last_mouse_down_pos: Option<mint::Point2<f32>>, // Some(Point2<f32>) if mouse is pressed, else None
+    last_mouse_up_pos: Option<mint::Point2<f32>>,
 }
 
 impl EventHandler for GameState {
@@ -196,15 +210,12 @@ impl EventHandler for GameState {
         y: f32,
     ) {
         self.last_mouse_down_pos = Some(mint::Point2 { x, y });
+        self.last_mouse_up_pos = None;
     }
 
-    fn mouse_button_up_event(
-        &mut self,
-        _ctx: &mut Context,
-        _button: MouseButton,
-        _x: f32,
-        _y: f32,
-    ) {
+    fn mouse_button_up_event(&mut self, _ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
         self.last_mouse_down_pos = None;
+        self.last_mouse_up_pos = Some(mint::Point2 { x, y });
+        self.grid.move_piece(mint::Point2 { x, y });
     }
 }
