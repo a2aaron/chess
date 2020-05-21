@@ -1,27 +1,41 @@
 use std::fmt;
 
+// use ggez::Context;
+
 #[derive(Debug)]
-pub struct GameState {
-    board: Board,
+pub struct BoardState {
+    pub board: Board,
+    pub current_player: Color,
     dead_black: Vec<Piece>,
     dead_white: Vec<Piece>,
     black_has_castle: bool,
     white_has_castle: bool,
 }
 
-impl GameState {
-    pub fn new() -> GameState {
-        GameState {
-            board: Board::blank(),
+impl BoardState {
+    pub fn new(board: Board) -> BoardState {
+        BoardState {
+            board,
+            current_player: Color::White,
             dead_black: Vec::new(),
             dead_white: Vec::new(),
             black_has_castle: true,
             white_has_castle: true,
         }
     }
+
+    pub fn take_turn(&mut self, start: (i8, i8), end: (i8, i8)) -> Result<(), &'static str> {
+        use Color::*;
+        self.board.move_piece(self.current_player, start, end)?;
+        self.current_player = match self.current_player {
+            White => Black,
+            Black => White,
+        };
+        Ok(())
+    }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
     board: [[Tile; 8]; 8],
 }
@@ -119,7 +133,7 @@ impl Board {
         if start_piece.color != player {
             return Err("You aren't Caliborn");
         }
-        let valid_end_spots: Vec<(i8, i8)> = get_move_list(self, start);
+        let valid_end_spots = get_move_list(self, start).0;
 
         if valid_end_spots.contains(&end) {
             Ok(())
@@ -141,11 +155,14 @@ impl Board {
     }
 }
 
-fn get_move_list(board: &Board, coord: (i8, i8)) -> Vec<(i8, i8)> {
+pub struct MoveList(pub Vec<(i8, i8)>);
+// pub struct MoveDeltas(Vec<(i8,i8>));
+
+pub fn get_move_list(board: &Board, coord: (i8, i8)) -> MoveList {
     let piece = board.get(coord).0;
     use PieceType::*;
     match piece {
-        None => vec![],
+        None => MoveList(vec![]),
         Some(piece) => match piece.piece {
             Pawn => check_pawn(board, coord, piece.color),
             Knight | King => check_jump_piece(
@@ -175,12 +192,30 @@ impl fmt::Display for Board {
     }
 }
 
-fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
-    let mut valid_end_pos = Vec::new();
+impl fmt::Display for MoveList {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for i in 0..8 {
+            for j in 0..8 {
+                let x: i8 = j;
+                let y = 7 - i;
+                if self.0.contains(&(x, y)) {
+                    write!(f, "## ")?;
+                } else {
+                    write!(f, ".. ")?;
+                }
+            }
+            writeln!(f, "")?;
+        }
+        Ok(())
+    }
+}
+
+fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> MoveList {
+    let mut valid_end_pos = MoveList(Vec::new());
     let forwards = (pos.0, pos.1 + color.direction());
     if on_board(forwards) {
         if board.get(forwards).0.is_none() {
-            valid_end_pos.push(forwards);
+            valid_end_pos.0.push(forwards);
         }
     }
 
@@ -190,7 +225,7 @@ fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> Vec<(i8, i8)> {
     ] {
         if on_board(diagonal) {
             match board.get(diagonal).0 {
-                Some(piece) if piece.color != color => valid_end_pos.push(diagonal),
+                Some(piece) if piece.color != color => valid_end_pos.0.push(diagonal),
                 _ => {}
             }
         }
@@ -207,8 +242,8 @@ fn check_jump_piece(
     pos: (i8, i8),
     color: Color,
     move_deltas: Vec<(i8, i8)>,
-) -> Vec<(i8, i8)> {
-    let mut valid_end_pos = Vec::new();
+) -> MoveList {
+    let mut valid_end_pos = MoveList(Vec::new());
     for delta in move_deltas {
         let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
         if !on_board(end_pos) {
@@ -217,8 +252,8 @@ fn check_jump_piece(
         // A piece may actually move to end_pos if the location is unoccupied
         // or contains a piece of the opposite color.
         match board.get(end_pos).0 {
-            Some(piece) if piece.color != color => valid_end_pos.push(end_pos),
-            None => valid_end_pos.push(end_pos),
+            Some(piece) if piece.color != color => valid_end_pos.0.push(end_pos),
+            None => valid_end_pos.0.push(end_pos),
             _ => {}
         }
     }
@@ -236,8 +271,8 @@ fn check_line_of_sight_piece(
     pos: (i8, i8),
     color: Color,
     line_of_sights: Vec<Vec<(i8, i8)>>,
-) -> Vec<(i8, i8)> {
-    let mut valid_end_pos = Vec::new();
+) -> MoveList {
+    let mut valid_end_pos = MoveList(Vec::new());
     for los in line_of_sights {
         for delta in los {
             let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
@@ -248,10 +283,10 @@ fn check_line_of_sight_piece(
 
             let end_piece = board.get(end_pos).0;
             if end_piece.is_none() {
-                valid_end_pos.push(end_pos);
+                valid_end_pos.0.push(end_pos);
             } else if let Some(piece) = end_piece {
                 if piece.color != color {
-                    valid_end_pos.push(end_pos);
+                    valid_end_pos.0.push(end_pos);
                 }
                 break;
             }
@@ -406,8 +441,6 @@ impl fmt::Display for PieceType {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::hash::Hash;
-    use std::iter::FromIterator;
 
     use super::*;
 
@@ -703,18 +736,18 @@ mod tests {
         let move_list = get_move_list(&board, coord);
         println!("Board\n{}", board);
         println!("Actual Move List");
-        print_move_list(&move_list);
+        println!("{}", &move_list);
         println!("Expected Move List");
-        print_move_list(&expected);
+        println!("{}", &expected);
 
         let mut move_list_counts = HashMap::new();
-        for ele in move_list {
+        for ele in move_list.0 {
             let entry = move_list_counts.entry(ele).or_insert(0);
             *entry += 1;
         }
 
         let mut expected_counts = HashMap::new();
-        for ele in expected {
+        for ele in expected.0 {
             let entry = expected_counts.entry(ele).or_insert(0);
             *entry += 1;
         }
@@ -723,30 +756,15 @@ mod tests {
     }
 
     /// Create list of valid moves given a string board
-    fn to_move_list(array: Vec<&str>) -> Vec<(i8, i8)> {
-        let mut move_list = Vec::new();
+    fn to_move_list(array: Vec<&str>) -> MoveList {
+        let mut move_list = MoveList(Vec::new());
         for (y, row) in array.iter().enumerate() {
             for (x, tile) in (*row).split_whitespace().enumerate() {
                 if tile.starts_with("#") {
-                    move_list.push((x as i8, ((array.len() - 1) - y) as i8));
+                    move_list.0.push((x as i8, ((array.len() - 1) - y) as i8));
                 };
             }
         }
         move_list
-    }
-
-    fn print_move_list(move_list: &Vec<(i8, i8)>) {
-        for i in 0..8 {
-            for j in 0..8 {
-                let x: i8 = j;
-                let y = 7 - i;
-                if move_list.contains(&(x, y)) {
-                    print!("## ");
-                } else {
-                    print!(".. ");
-                }
-            }
-            println!("");
-        }
     }
 }
