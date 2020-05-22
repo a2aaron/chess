@@ -45,7 +45,7 @@ fn main() {
     //     ".. .. .. .. .. .. WQ ..",
     // ];
     // let board = Board::from_string_vec(setup);
-    let board = Board::default();
+    let board = BoardState::new(Board::default());
     // Create an instance of your event handler.
     // Usually, you should provide it with the Context object to
     // use when setting your game up.
@@ -78,9 +78,9 @@ struct Grid {
     square_size: f32,
     color: graphics::Color,
     offset: mint::Point2<f32>,
-    dragging: Option<(i8, i8)>,
-    drop_locations: Option<Vec<(i8, i8)>>,
-    board: Board,
+    dragging: Option<BoardCoord>,
+    drop_locations: Option<Vec<BoardCoord>>,
+    board: BoardState,
 }
 
 impl Grid {
@@ -91,19 +91,22 @@ impl Grid {
         let blue = graphics::Color::new(0.0, 0.0, 1.0, 1.0);
         for i in 0..8 {
             for j in 0..8 {
+                let x = j;
+                let y = 7 - i;
                 let rect = graphics::Rect::new(
-                    i as f32 * self.square_size,
                     j as f32 * self.square_size,
+                    i as f32 * self.square_size,
                     self.square_size,
                     self.square_size,
                 );
-
+                let coord = BoardCoord(x, y);
                 let mouse = input::mouse::position(ctx);
-                if Some((i, j)) == self.dragging {
+                if Some(coord) == self.dragging {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, green);
-                } else if (i, j) == self.to_grid_coord(mouse) {
+                } else if coord == self.to_grid_coord(mouse) {
+                    println!("{:?}", coord);
                     mesh.rectangle(graphics::DrawMode::fill(), rect, self.color);
-                } else if contains(&self.drop_locations, &(i, j)) {
+                } else if contains(&self.drop_locations, &coord) {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, blue);
                 } else {
                     mesh.rectangle(draw_mode, rect, self.color);
@@ -115,51 +118,65 @@ impl Grid {
 
     fn update(&mut self, last_mouse_down_pos: Option<mint::Point2<f32>>) {
         self.dragging = last_mouse_down_pos.map(|pos| self.to_grid_coord(pos));
-        self.drop_locations = match self.dragging {
-            None => None,
-            Some(coord) => {
-                if on_board(coord) {
-                    Some(get_move_list(&self.board, coord).0)
-                } else {
-                    None
-                }
-            }
-        }
+        self.drop_locations = self.dragging.map(|coord| self.board.get_move_list(coord));
     }
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         let mesh = self.to_mesh(ctx);
         graphics::draw(ctx, &mesh, (self.offset,))?;
 
-        for y in 0..8 {
-            for x in 0..8 {
-                let tile = self.board.get((x, y));
+        for i in 0..8 {
+            for j in 0..8 {
+                let x = j;
+                let y = 7 - i;
+                let tile = self.board.get(BoardCoord(x, y)).unwrap();
                 let mut text = graphics::Text::new(tile.as_str());
                 let text = text.set_font(font, graphics::Scale::uniform(50.0));
-                let location = mint::Point2 {
-                    x: x as f32 * self.square_size + self.square_size * 0.5,
-                    y: y as f32 * self.square_size + self.square_size * 0.5,
+                let location = self.to_screen_coord(BoardCoord(x, y))
+                    + na::Vector2::new(self.square_size * 0.5, self.square_size * 0.5);
+                let color = match tile.0 {
+                    None => graphics::Color::new(0.0, 0.0, 0.0, 0.0),
+                    Some(piece) => match piece.color {
+                        Color::Black => graphics::Color::new(1.0, 0.0, 0.0, 1.0),
+                        Color::White => graphics::Color::new(1.0, 1.0, 1.0, 1.0),
+                    },
                 };
-                graphics::draw(ctx, text, (location,))?;
+                graphics::draw(ctx, text, (location, color))?;
             }
         }
         Ok(())
     }
 
-    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> (i8, i8) {
+    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> BoardCoord {
         let offset_coords = minus(screen_coords, self.offset);
         let grid_x = (offset_coords.x / self.square_size).floor() as i8;
         let grid_y = (offset_coords.y / self.square_size).floor() as i8;
-        (grid_x, grid_y)
+        BoardCoord(grid_x, 7 - grid_y)
+    }
+
+    fn to_screen_coord(&self, board_coords: BoardCoord) -> na::Point2<f32> {
+        na::Point2::new(
+            board_coords.0 as f32 * self.square_size,
+            (7 - board_coords.1) as f32 * self.square_size,
+        )
     }
 
     fn move_piece(&mut self, last_mouse_down_pos: mint::Point2<f32>) {
         let drop_loc = self.to_grid_coord(last_mouse_down_pos);
         if contains(&self.drop_locations, &drop_loc) {
-            self.board.move_piece(self.dragging.unwrap(), drop_loc);
+            self.board.take_turn(self.dragging.unwrap(), drop_loc);
         }
     }
 }
+
+///  A screen space coordinate for the grid. Origin is in the top left and
+/// (7, 7) is at the bottom right. This is in line with the standard coordinate
+/// system used for rendering, and is vertically mirrored from BoardCoords.
+struct ScreenGridCoord(i8, i8);
+
+// fn to_board_coord(ScreenGridCoord(x, y): ScreenGridCoord) -> BoardCoord {
+//     BoardCoord(x, 7 - y);
+// }
 
 fn minus(a: mint::Point2<f32>, b: mint::Point2<f32>) -> mint::Point2<f32> {
     mint::Point2 {

@@ -2,7 +2,7 @@ use std::fmt;
 
 // use ggez::Context;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BoardState {
     pub board: Board,
     pub current_player: Color,
@@ -24,7 +24,7 @@ impl BoardState {
         }
     }
 
-    pub fn take_turn(&mut self, start: (i8, i8), end: (i8, i8)) -> Result<(), &'static str> {
+    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
         use Color::*;
         self.board.check_move(self.current_player, start, end)?;
         self.board.move_piece(start, end);
@@ -33,6 +33,31 @@ impl BoardState {
             Black => White,
         };
         Ok(())
+    }
+
+    pub fn get(&self, coord: BoardCoord) -> Option<Tile> {
+        if on_board(coord) {
+            Some(self.board.get(coord))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_move_list(&self, coord: BoardCoord) -> Vec<BoardCoord> {
+        if !on_board(coord) {
+            return vec![];
+        }
+
+        let tile = self.board.get(coord).0;
+        if tile.is_none() {
+            return vec![];
+        }
+        let piece = tile.unwrap();
+        if piece.color != self.current_player {
+            return vec![];
+        }
+
+        get_move_list(&self.board, coord).0
     }
 }
 
@@ -99,7 +124,7 @@ impl Board {
 
     /// Moves the piece located at `start` to `end`. This function always moves
     /// the piece, even if it would not be actually legal to do so in a real game.
-    pub fn move_piece(&mut self, start: (i8, i8), end: (i8, i8)) {
+    pub fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
         let moved_piece = self.get(start);
         self.set(end, moved_piece);
         self.set(start, Tile(None));
@@ -111,8 +136,8 @@ impl Board {
     pub fn check_move(
         &self,
         player: Color,
-        start: (i8, i8),
-        end: (i8, i8),
+        start: BoardCoord,
+        end: BoardCoord,
     ) -> Result<(), &'static str> {
         let start_piece = self.get(start);
 
@@ -135,22 +160,26 @@ impl Board {
     }
 
     /// Gets the piece located at the coordinates
-    pub fn get(&self, coord: (i8, i8)) -> Tile {
+    pub fn get(&self, BoardCoord(x, y): BoardCoord) -> Tile {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
-        self.board[(7 - coord.1) as usize][coord.0 as usize]
+        self.board[(7 - y) as usize][x as usize]
     }
 
     /// Sets the piece located at the coordinates
-    fn set(&mut self, coord: (i8, i8), piece: Tile) {
+    fn set(&mut self, BoardCoord(x, y): BoardCoord, piece: Tile) {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
-        self.board[(7 - coord.1) as usize][coord.0 as usize] = piece;
+        self.board[(7 - y) as usize][x as usize] = piece;
     }
 }
-
-pub struct MoveList(pub Vec<(i8, i8)>);
+/// A board space coordinate. The origin is at the bottom left and (7, 7) is at
+/// the top right. This is in line with how rank-file notation works~~, and also
+/// is how graphics should work~~
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoardCoord(pub i8, pub i8);
+pub struct MoveList(pub Vec<BoardCoord>);
 // pub struct MoveDeltas(Vec<(i8,i8>));
 
-pub fn get_move_list(board: &Board, coord: (i8, i8)) -> MoveList {
+fn get_move_list(board: &Board, coord: BoardCoord) -> MoveList {
     let piece = board.get(coord).0;
     use PieceType::*;
     match piece {
@@ -188,9 +217,8 @@ impl fmt::Display for MoveList {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for i in 0..8 {
             for j in 0..8 {
-                let x: i8 = j;
-                let y = 7 - i;
-                if self.0.contains(&(x, y)) {
+                let coord = BoardCoord(j, 7 - i);
+                if self.0.contains(&coord) {
                     write!(f, "## ")?;
                 } else {
                     write!(f, ".. ")?;
@@ -202,9 +230,9 @@ impl fmt::Display for MoveList {
     }
 }
 
-fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> MoveList {
+fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
     let mut valid_end_pos = MoveList(Vec::new());
-    let forwards = (pos.0, pos.1 + color.direction());
+    let forwards = BoardCoord(pos.0, pos.1 + color.direction());
     if on_board(forwards) {
         if board.get(forwards).0.is_none() {
             valid_end_pos.0.push(forwards);
@@ -212,8 +240,8 @@ fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> MoveList {
     }
 
     for &diagonal in &[
-        (pos.0 + 1, pos.1 + color.direction()),
-        (pos.0 - 1, pos.1 + color.direction()),
+        BoardCoord(pos.0 + 1, pos.1 + color.direction()),
+        BoardCoord(pos.0 - 1, pos.1 + color.direction()),
     ] {
         if on_board(diagonal) {
             match board.get(diagonal).0 {
@@ -231,13 +259,13 @@ fn check_pawn(board: &Board, pos: (i8, i8), color: Color) -> MoveList {
 /// Either unoccupied (a move) or is a piece of the opposite color (a capture).
 fn check_jump_piece(
     board: &Board,
-    pos: (i8, i8),
+    pos: BoardCoord,
     color: Color,
-    move_deltas: Vec<(i8, i8)>,
+    move_deltas: Vec<BoardCoord>,
 ) -> MoveList {
     let mut valid_end_pos = MoveList(Vec::new());
     for delta in move_deltas {
-        let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
+        let end_pos = BoardCoord(pos.0 + delta.0, pos.1 + delta.1 * color.direction());
         if !on_board(end_pos) {
             continue;
         }
@@ -260,14 +288,14 @@ fn check_jump_piece(
 /// color or just before the first piece of the same color.
 fn check_line_of_sight_piece(
     board: &Board,
-    pos: (i8, i8),
+    pos: BoardCoord,
     color: Color,
-    line_of_sights: Vec<Vec<(i8, i8)>>,
+    line_of_sights: Vec<Vec<BoardCoord>>,
 ) -> MoveList {
     let mut valid_end_pos = MoveList(Vec::new());
     for los in line_of_sights {
         for delta in los {
-            let end_pos = (pos.0 + delta.0, pos.1 + delta.1 * color.direction());
+            let end_pos = BoardCoord(pos.0 + delta.0, pos.1 + delta.1 * color.direction());
 
             if !on_board(end_pos) {
                 break;
@@ -288,7 +316,7 @@ fn check_line_of_sight_piece(
     valid_end_pos
 }
 
-fn get_los(piece: PieceType) -> Result<Vec<Vec<(i8, i8)>>, &'static str> {
+fn get_los(piece: PieceType) -> Result<Vec<Vec<BoardCoord>>, &'static str> {
     use PieceType::*;
     match piece {
         Rook => Ok(get_los_rook()),
@@ -298,43 +326,43 @@ fn get_los(piece: PieceType) -> Result<Vec<Vec<(i8, i8)>>, &'static str> {
     }
 }
 
-fn get_los_rook() -> Vec<Vec<(i8, i8)>> {
+fn get_los_rook() -> Vec<Vec<BoardCoord>> {
     let mut los_right = Vec::new();
     let mut los_left = Vec::new();
     let mut los_up = Vec::new();
     let mut los_down = Vec::new();
     for i in 1..8 {
-        los_right.push((i, 0));
-        los_left.push((-i, 0));
-        los_up.push((0, i));
-        los_down.push((0, -i));
+        los_right.push(BoardCoord(i, 0));
+        los_left.push(BoardCoord(-i, 0));
+        los_up.push(BoardCoord(0, i));
+        los_down.push(BoardCoord(0, -i));
     }
     return vec![los_up, los_down, los_right, los_left];
 }
 
-fn get_los_bishop() -> Vec<Vec<(i8, i8)>> {
+fn get_los_bishop() -> Vec<Vec<BoardCoord>> {
     let mut los_up_right = Vec::new();
     let mut los_up_left = Vec::new();
     let mut los_down_right = Vec::new();
     let mut los_down_left = Vec::new();
     for i in 1..8 {
-        los_up_right.push((i, i));
-        los_up_left.push((-i, i));
-        los_down_right.push((i, -i));
-        los_down_left.push((-i, -i));
+        los_up_right.push(BoardCoord(i, i));
+        los_up_left.push(BoardCoord(-i, i));
+        los_down_right.push(BoardCoord(i, -i));
+        los_down_left.push(BoardCoord(-i, -i));
     }
 
     return vec![los_up_right, los_up_left, los_down_right, los_down_left];
 }
 
-pub fn on_board(pos: (i8, i8)) -> bool {
+pub fn on_board(pos: BoardCoord) -> bool {
     0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
 }
 
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct Tile(Option<Piece>);
+pub struct Tile(pub Option<Piece>);
 
 impl fmt::Display for Tile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -351,12 +379,12 @@ impl Tile {
         match self.0 {
             None => "",
             Some(piece) => match piece.piece {
-                Pawn => "♙",
-                Knight => "♘",
-                Bishop => "♗",
-                Rook => "♖",
-                Queen => "♕",
-                King => "♔",
+                Pawn => "♟",
+                Knight => "♞",
+                Bishop => "♝",
+                Rook => "♜",
+                Queen => "♛",
+                King => "♚",
             },
         }
     }
@@ -365,7 +393,7 @@ impl Tile {
 /// A chess piece which has a color and the type of piece it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Piece {
-    color: Color,
+    pub color: Color,
     piece: PieceType,
 }
 
@@ -406,29 +434,29 @@ pub enum PieceType {
 /// Return a list of valid movement deltas (offsets from the piece) given a
 /// PieceType. Move deltas DO NOT take into account the piece's color.
 /// This function returns Err on Rook, Bishop, and Queen
-fn get_move_deltas(piece: PieceType) -> Result<Vec<(i8, i8)>, &'static str> {
+fn get_move_deltas(piece: PieceType) -> Result<Vec<BoardCoord>, &'static str> {
     use PieceType::*;
     match piece {
-        Pawn => Ok(vec![(0, 1)]),
+        Pawn => Ok(vec![BoardCoord(0, 1)]),
         Knight => Ok(vec![
-            (1, 2),
-            (2, 1),
-            (-1, 2),
-            (-2, 1),
-            (1, -2),
-            (2, -1),
-            (-1, -2),
-            (-2, -1),
+            BoardCoord(1, 2),
+            BoardCoord(2, 1),
+            BoardCoord(-1, 2),
+            BoardCoord(-2, 1),
+            BoardCoord(1, -2),
+            BoardCoord(2, -1),
+            BoardCoord(-1, -2),
+            BoardCoord(-2, -1),
         ]),
         King => Ok(vec![
-            (0, 1),
-            (1, 1),
-            (1, 0),
-            (1, -1),
-            (0, -1),
-            (-1, -1),
-            (-1, 0),
-            (-1, 1),
+            BoardCoord(0, 1),
+            BoardCoord(1, 1),
+            BoardCoord(1, 0),
+            BoardCoord(1, -1),
+            BoardCoord(0, -1),
+            BoardCoord(-1, -1),
+            BoardCoord(-1, 0),
+            BoardCoord(-1, 1),
         ]),
         Rook | Bishop | Queen => Err("Can't get move deltas for Rooks/Bishops/Kings"),
     }
@@ -469,7 +497,7 @@ mod tests {
         let board = Board::from_string_vec(board);
         let mut expected = Board::blank();
         expected.set(
-            (3, 3),
+            BoardCoord(3, 3),
             Tile(Some(Piece {
                 piece: PieceType::Pawn,
                 color: Color::White,
@@ -491,7 +519,7 @@ mod tests {
         let board = Board::from_string_vec(board);
         let mut expected = Board::blank();
         expected.set(
-            (3, 3),
+            BoardCoord(3, 3),
             Tile(Some(Piece {
                 piece: PieceType::Pawn,
                 color: Color::White,
@@ -507,7 +535,7 @@ mod tests {
         let board = Board::from_string_vec(board);
         let mut expected = Board::blank();
         expected.set(
-            (0, 0),
+            BoardCoord(0, 0),
             Tile(Some(Piece {
                 piece: PieceType::Pawn,
                 color: Color::White,
@@ -740,6 +768,7 @@ mod tests {
     }
 
     fn assert_valid_movement(board: Vec<&str>, coord: (i8, i8), expected: Vec<&str>) {
+        let coord = BoardCoord(coord.0, coord.1);
         let board = Board::from_string_vec(board);
         let expected = to_move_list(expected);
         let move_list = get_move_list(&board, coord);
@@ -770,7 +799,9 @@ mod tests {
         for (y, row) in array.iter().enumerate() {
             for (x, tile) in (*row).split_whitespace().enumerate() {
                 if tile.starts_with("#") {
-                    move_list.0.push((x as i8, ((array.len() - 1) - y) as i8));
+                    move_list
+                        .0
+                        .push(BoardCoord(x as i8, ((array.len() - 1) - y) as i8));
                 };
             }
         }
