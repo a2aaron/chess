@@ -327,7 +327,7 @@ fn get_los_bishop() -> Vec<Vec<(i8, i8)>> {
     return vec![los_up_right, los_up_left, los_down_right, los_down_left];
 }
 
-fn on_board(pos: (i8, i8)) -> bool {
+pub fn on_board(pos: (i8, i8)) -> bool {
     0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
 }
 
@@ -341,6 +341,23 @@ impl fmt::Display for Tile {
         match self.0 {
             Some(piece) => write!(f, "{}{}", piece.color, piece.piece),
             None => write!(f, ".."),
+        }
+    }
+}
+
+impl Tile {
+    pub fn as_str(&self) -> &'static str {
+        use PieceType::*;
+        match self.0 {
+            None => "",
+            Some(piece) => match piece.piece {
+                Pawn => "♙",
+                Knight => "♘",
+                Bishop => "♗",
+                Rook => "♖",
+                Queen => "♕",
+                King => "♔",
+            },
         }
     }
 }

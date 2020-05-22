@@ -20,11 +20,19 @@ pub fn read_string_from_stdin(message: Option<String>) -> String {
 }
 
 fn main() {
-    // Make a Context.
-    let (mut ctx, mut event_loop) = ContextBuilder::new("chess", "a2aaron")
-        .build()
-        .expect("could not create ggez context!");
-
+    let mut cb = ContextBuilder::new("chess", "a2aaron");
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        // Add the resources path so we can use it.
+        let mut path = std::path::PathBuf::from(manifest_dir);
+        path.push("resources");
+        println!("Adding path {:?}", path);
+        // We need this re-assignment alas, see
+        // https://aturon.github.io/ownership/builders.html
+        // under "Consuming builders"
+        cb = cb.add_resource_path(path);
+    }
+    // Make the Context
+    let (mut ctx, mut event_loop) = cb.build().expect("could not create ggez context!");
     // #[rustfmt::skip]
     // let setup = vec![
     //     ".. .. .. .. .. .. .. ..",
@@ -55,6 +63,7 @@ fn main() {
         grid: grid,
         last_mouse_down_pos: None,
         last_mouse_up_pos: None,
+        font: graphics::Font::new(&mut ctx, std::path::Path::new("\\freeserif.ttf")).unwrap(),
     };
 
     // Run!
@@ -90,10 +99,10 @@ impl Grid {
                 );
 
                 let mouse = input::mouse::position(ctx);
-                if (i, j) == self.to_grid_coord(mouse) {
-                    mesh.rectangle(graphics::DrawMode::fill(), rect, self.color);
-                } else if Some((i, j)) == self.dragging {
+                if Some((i, j)) == self.dragging {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, green);
+                } else if (i, j) == self.to_grid_coord(mouse) {
+                    mesh.rectangle(graphics::DrawMode::fill(), rect, self.color);
                 } else if contains(&self.drop_locations, &(i, j)) {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, blue);
                 } else {
@@ -106,14 +115,35 @@ impl Grid {
 
     fn update(&mut self, last_mouse_down_pos: Option<mint::Point2<f32>>) {
         self.dragging = last_mouse_down_pos.map(|pos| self.to_grid_coord(pos));
-        self.drop_locations = self
-            .dragging
-            .map(|coord| get_move_list(&self.board, coord).0);
+        self.drop_locations = match self.dragging {
+            None => None,
+            Some(coord) => {
+                if on_board(coord) {
+                    Some(get_move_list(&self.board, coord).0)
+                } else {
+                    None
+                }
+            }
+        }
     }
 
-    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         let mesh = self.to_mesh(ctx);
-        graphics::draw(ctx, &mesh, (self.offset,))
+        graphics::draw(ctx, &mesh, (self.offset,))?;
+
+        for y in 0..8 {
+            for x in 0..8 {
+                let tile = self.board.get((x, y));
+                let mut text = graphics::Text::new(tile.as_str());
+                let text = text.set_font(font, graphics::Scale::uniform(50.0));
+                let location = mint::Point2 {
+                    x: x as f32 * self.square_size + self.square_size * 0.5,
+                    y: y as f32 * self.square_size + self.square_size * 0.5,
+                };
+                graphics::draw(ctx, text, (location,))?;
+            }
+        }
+        Ok(())
     }
 
     fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> (i8, i8) {
@@ -151,6 +181,7 @@ where
 struct GameState {
     grid: Grid,
     mesh: graphics::Mesh,
+    font: graphics::Font,
     last_mouse_down_pos: Option<mint::Point2<f32>>, // Some(Point2<f32>) if mouse is pressed, else None
     last_mouse_up_pos: Option<mint::Point2<f32>>,
 }
@@ -181,7 +212,7 @@ impl EventHandler for GameState {
         let result = board_state.take_turn((a, b), (c, d));
         println!("{:?}", result);*/
         self.grid.update(self.last_mouse_down_pos);
-        self.mesh = self.grid.to_mesh(ctx);
+        // self.mesh = self.grid.to_mesh(ctx);
         Ok(())
     }
 
@@ -197,7 +228,7 @@ impl EventHandler for GameState {
         )?;
         let pos = input::mouse::position(ctx);
         let (mousex, mousey) = (pos.x, pos.y);
-        self.grid.draw(ctx)?;
+        self.grid.draw(ctx, self.font)?;
         graphics::draw(ctx, &circle, (na::Point2::new(mousex, mousey),))?;
         graphics::present(ctx)
     }
