@@ -99,15 +99,20 @@ impl Grid {
                     self.square_size,
                     self.square_size,
                 );
-                let coord = BoardCoord(x, y);
+                let coord = BoardCoord::new((x, y)).unwrap();
                 let mouse = input::mouse::position(ctx);
+                let mouse = self.to_grid_coord(mouse).ok();
+                // Color the dragged square green
                 if Some(coord) == self.dragging {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, green);
-                } else if coord == self.to_grid_coord(mouse) {
+                // Color the currently highlighted square red
+                } else if Some(coord) == mouse {
                     println!("{:?}", coord);
                     mesh.rectangle(graphics::DrawMode::fill(), rect, self.color);
+                // Color the potential drop locations blue
                 } else if contains(&self.drop_locations, &coord) {
                     mesh.rectangle(graphics::DrawMode::fill(), rect, blue);
+                // Color all other squares with a red outline
                 } else {
                     mesh.rectangle(draw_mode, rect, self.color);
                 }
@@ -117,7 +122,13 @@ impl Grid {
     }
 
     fn update(&mut self, last_mouse_down_pos: Option<mint::Point2<f32>>) {
-        self.dragging = last_mouse_down_pos.map(|pos| self.to_grid_coord(pos));
+        self.dragging = match last_mouse_down_pos {
+            None => None,
+            Some(pos) => match self.to_grid_coord(pos) {
+                Err(_) => None,
+                Ok(coord) => Some(coord),
+            },
+        };
         self.drop_locations = self.dragging.map(|coord| self.board.get_move_list(coord));
     }
 
@@ -129,7 +140,8 @@ impl Grid {
             for j in 0..8 {
                 let x = j;
                 let y = 7 - i;
-                let tile = self.board.get(BoardCoord(x, y)).unwrap();
+                let coord = BoardCoord::new((x, y)).unwrap();
+                let tile = self.board.get(coord);
                 let mut text = graphics::Text::new(tile.as_str());
                 let text = text.set_font(font, graphics::Scale::uniform(50.0));
                 let location = self.to_screen_coord(BoardCoord(x, y))
@@ -147,13 +159,16 @@ impl Grid {
         Ok(())
     }
 
-    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> BoardCoord {
+    /// Returns a tuple of where the given screen space coordinates would end up
+    /// on the grid. This function returns Err if the point would be off the grid.
+    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
         let offset_coords = minus(screen_coords, self.offset);
         let grid_x = (offset_coords.x / self.square_size).floor() as i8;
         let grid_y = (offset_coords.y / self.square_size).floor() as i8;
-        BoardCoord(grid_x, 7 - grid_y)
+        BoardCoord::new((grid_x, 7 - grid_y))
     }
 
+    /// Returns the upper left corner of the square located at `board_coords`
     fn to_screen_coord(&self, board_coords: BoardCoord) -> na::Point2<f32> {
         na::Point2::new(
             board_coords.0 as f32 * self.square_size,
@@ -161,23 +176,21 @@ impl Grid {
         )
     }
 
+    /// Move a piece at the location of the last mouse down press to where the
+    /// mouse currently is.
     fn move_piece(&mut self, last_mouse_down_pos: mint::Point2<f32>) {
         let drop_loc = self.to_grid_coord(last_mouse_down_pos);
+        if drop_loc.is_err() {
+            return;
+        }
+        let drop_loc = drop_loc.unwrap();
         if contains(&self.drop_locations, &drop_loc) {
             self.board.take_turn(self.dragging.unwrap(), drop_loc);
         }
     }
 }
 
-///  A screen space coordinate for the grid. Origin is in the top left and
-/// (7, 7) is at the bottom right. This is in line with the standard coordinate
-/// system used for rendering, and is vertically mirrored from BoardCoords.
-struct ScreenGridCoord(i8, i8);
-
-// fn to_board_coord(ScreenGridCoord(x, y): ScreenGridCoord) -> BoardCoord {
-//     BoardCoord(x, 7 - y);
-// }
-
+/// Subtract two `mint::Point2`s from each other in the obvious way.
 fn minus(a: mint::Point2<f32>, b: mint::Point2<f32>) -> mint::Point2<f32> {
     mint::Point2 {
         x: a.x - b.x,

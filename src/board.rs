@@ -2,9 +2,13 @@ use std::fmt;
 
 // use ggez::Context;
 
+/// The overall board state, which keeps track of the various things each player
+/// can do, such as if they can castle, or what pieces are currently dead.
 #[derive(Debug, Clone)]
 pub struct BoardState {
+    /// The actual board containing all the pieces in play
     pub board: Board,
+    /// The color of the player-to-move
     pub current_player: Color,
     dead_black: Vec<Piece>,
     dead_white: Vec<Piece>,
@@ -13,6 +17,8 @@ pub struct BoardState {
 }
 
 impl BoardState {
+    /// Create a board state using the board given. The player-to-move will
+    /// initially be white.
     pub fn new(board: Board) -> BoardState {
         BoardState {
             board,
@@ -24,6 +30,9 @@ impl BoardState {
         }
     }
 
+    /// Attempt to move the piece located at `start` to `end`. This function
+    /// returns `Ok()` if the move was successful and `Err` if it was not.
+    /// It also sets `current_player` to the opposite color.
     pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
         use Color::*;
         self.board.check_move(self.current_player, start, end)?;
@@ -35,14 +44,19 @@ impl BoardState {
         Ok(())
     }
 
-    pub fn get(&self, coord: BoardCoord) -> Option<Tile> {
-        if on_board(coord) {
-            Some(self.board.get(coord))
-        } else {
-            None
-        }
+    /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
+    /// would be off the board.
+    pub fn get(&self, coord: BoardCoord) -> Tile {
+        self.board.get(coord)
     }
 
+    /// Return the list of valid places the piece at `coord` can move. This
+    /// function takes into account `current_player`. Note that the returned
+    /// vector is empty if any of the follow are true
+    /// - `coord` is off the board
+    /// - `coord` refers to an empty tile
+    /// - `coord` refers to a piece that is the opposite color of `current_player`
+    /// - `coord` refers to a piece that has nowhere to move
     pub fn get_move_list(&self, coord: BoardCoord) -> Vec<BoardCoord> {
         if !on_board(coord) {
             return vec![];
@@ -61,13 +75,16 @@ impl BoardState {
     }
 }
 
+/// Wrapper struct around an 8x8 array of Tiles. This represents the state of
+/// pieces on the board. Note that Boards are arranged internally so that white
+/// is on the bottom and black is on the top. Hence, `board[0][0]` is the bottom
+/// left of the board, and is white's leftmost square, while `board[7][7]` is
+/// the top right of the board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
     board: [[Tile; 8]; 8],
 }
 
-// Boards are arranged internally so that white is on the bottom and black is on the top.
-// Hence, board[0][0] is the bottom right of the board, and is white's leftmost square.
 impl Board {
     /// Create a chessboard with no pieces on it.
     pub fn blank() -> Board {
@@ -95,7 +112,7 @@ impl Board {
     /// Create a board from a string array. The array assumes that each string
     /// can be split into exactly 8 two character substrings, each either being
     /// "B" or "W" in the first character and a P, N, B, R, Q, or K in the
-    /// second character. Anything else is treated as None.
+    /// second character. Anything else is treated as a blank Tile.
     pub fn from_string_vec(str_board: Vec<&str>) -> Board {
         let mut board = Board::blank();
         for (i, row) in str_board.iter().enumerate() {
@@ -123,16 +140,18 @@ impl Board {
     }
 
     /// Moves the piece located at `start` to `end`. This function always moves
-    /// the piece, even if it would not be actually legal to do so in a real game.
+    /// the piece, even if it would not be actually legal to do so in a real
+    /// game, so you should check the move first with `check_move`
     pub fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
         let moved_piece = self.get(start);
         self.set(end, moved_piece);
         self.set(start, Tile(None));
     }
 
-    /// Check if the piece located at `start` can be moved to
-    /// `end`. This function returns `Ok(())` if the move is
-    /// valid and `Err(&str)` if the move is invalid.
+    /// Check if the piece located at `start` can be legally be moved to
+    /// `end`. This function assumes the player-to-move is whatever `player` is.
+    /// This function returns `Ok(())` if the move is valid and `Err(&str)` if
+    /// the move is invalid.
     pub fn check_move(
         &self,
         player: Color,
@@ -171,33 +190,6 @@ impl Board {
         self.board[(7 - y) as usize][x as usize] = piece;
     }
 }
-/// A board space coordinate. The origin is at the bottom left and (7, 7) is at
-/// the top right. This is in line with how rank-file notation works~~, and also
-/// is how graphics should work~~
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BoardCoord(pub i8, pub i8);
-pub struct MoveList(pub Vec<BoardCoord>);
-// pub struct MoveDeltas(Vec<(i8,i8>));
-
-fn get_move_list(board: &Board, coord: BoardCoord) -> MoveList {
-    let piece = board.get(coord).0;
-    use PieceType::*;
-    match piece {
-        None => MoveList(vec![]),
-        Some(piece) => match piece.piece {
-            Pawn => check_pawn(board, coord, piece.color),
-            Knight | King => check_jump_piece(
-                board,
-                coord,
-                piece.color,
-                get_move_deltas(piece.piece).unwrap(),
-            ),
-            Bishop | Rook | Queen => {
-                check_line_of_sight_piece(board, coord, piece.color, get_los(piece.piece).unwrap())
-            }
-        },
-    }
-}
 
 impl fmt::Display for Board {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -212,26 +204,51 @@ impl fmt::Display for Board {
         Ok(())
     }
 }
+/// A board space coordinate. The origin is at the bottom left and (7, 7) is at
+/// the top right. This is in line with how rank-file notation works~~, and also
+/// is how graphics should work~~
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoardCoord(pub i8, pub i8);
 
-impl fmt::Display for MoveList {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for i in 0..8 {
-            for j in 0..8 {
-                let coord = BoardCoord(j, 7 - i);
-                if self.0.contains(&coord) {
-                    write!(f, "## ")?;
-                } else {
-                    write!(f, ".. ")?;
-                }
-            }
-            writeln!(f, "")?;
+impl BoardCoord {
+    pub fn new((x, y): (i8, i8)) -> Result<BoardCoord, &'static str> {
+        if on_board_i8((x, y)) {
+            Ok(BoardCoord(x, y))
+        } else {
+            Err("Expected coordinates to be in range 0-7")
         }
-        Ok(())
     }
 }
 
+/// A list of spaces that a piece may move to.
+pub struct MoveList(pub Vec<BoardCoord>);
+
+/// Return a MoveList of the piece located at `coord`. This function assumes
+/// that the player to move is whatever the color of the piece at `coord` is.
+fn get_move_list(board: &Board, coord: BoardCoord) -> MoveList {
+    let piece = board.get(coord).0;
+    use PieceType::*;
+    match piece {
+        None => MoveList(vec![]),
+        Some(piece) => match piece.piece {
+            Pawn => check_pawn(board, coord, piece.color),
+            Knight | King => {
+                check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece))
+            }
+            Bishop | Rook | Queen => {
+                check_line_of_sight_piece(board, coord, piece.color, get_los(piece.piece))
+            }
+        },
+    }
+}
+
+/// Get a list of the locations the pawn at `pos` can move to. The pawn's color
+/// is assumed to be `color`. Note that this function doesn't actually check if
+/// there is a pawn at `pos`.
 fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
     let mut valid_end_pos = MoveList(Vec::new());
+
+    // Check forward space if it can be moved into.
     let forwards = BoardCoord(pos.0, pos.1 + color.direction());
     if on_board(forwards) {
         if board.get(forwards).0.is_none() {
@@ -239,6 +256,7 @@ fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
         }
     }
 
+    // Check diagonal spaces if they can be attacked.
     for &diagonal in &[
         BoardCoord(pos.0 + 1, pos.1 + color.direction()),
         BoardCoord(pos.0 - 1, pos.1 + color.direction()),
@@ -255,8 +273,10 @@ fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
 
 /// Get a list of valid locations the "jump" piece may move or capture to.
 /// The `move_deltas` is a list of offsets that the piece may potenitally move
-/// to. The piece may actually move there if the Tile is on the board and is
-/// Either unoccupied (a move) or is a piece of the opposite color (a capture).
+/// to. The piece's color is assumed to be `color`. The piece may actually move
+/// there if the Tile is on the board and is either unoccupied (a move) or is a
+/// piece of the opposite color (a capture). Note that this function doesn't
+/// actually check the piece at `pos`.
 fn check_jump_piece(
     board: &Board,
     pos: BoardCoord,
@@ -316,13 +336,14 @@ fn check_line_of_sight_piece(
     valid_end_pos
 }
 
-fn get_los(piece: PieceType) -> Result<Vec<Vec<BoardCoord>>, &'static str> {
+/// Returns LoS for Rooks, Bishops, and Queens. Panics on other PieceTypes.
+fn get_los(piece: PieceType) -> Vec<Vec<BoardCoord>> {
     use PieceType::*;
     match piece {
-        Rook => Ok(get_los_rook()),
-        Bishop => Ok(get_los_bishop()),
-        Queen => Ok([get_los_rook(), get_los_bishop()].concat()),
-        _ => Err("Only Rooks, Bishops, and Queens are line of sight pieces"),
+        Rook => get_los_rook(),
+        Bishop => get_los_bishop(),
+        Queen => [get_los_rook(), get_los_bishop()].concat(),
+        Pawn | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
     }
 }
 
@@ -355,10 +376,62 @@ fn get_los_bishop() -> Vec<Vec<BoardCoord>> {
     return vec![los_up_right, los_up_left, los_down_right, los_down_left];
 }
 
+/// Return a list of valid movement deltas (offsets from the piece) given a
+/// PieceType. Move deltas DO NOT take into account the piece's color.
+/// This function only works on Knights and Kings and panics on everything else.
+fn get_move_deltas(piece: PieceType) -> Vec<BoardCoord> {
+    use PieceType::*;
+    match piece {
+        Knight => vec![
+            BoardCoord(1, 2),
+            BoardCoord(2, 1),
+            BoardCoord(-1, 2),
+            BoardCoord(-2, 1),
+            BoardCoord(1, -2),
+            BoardCoord(2, -1),
+            BoardCoord(-1, -2),
+            BoardCoord(-2, -1),
+        ],
+        King => vec![
+            BoardCoord(0, 1),
+            BoardCoord(1, 1),
+            BoardCoord(1, 0),
+            BoardCoord(1, -1),
+            BoardCoord(0, -1),
+            BoardCoord(-1, -1),
+            BoardCoord(-1, 0),
+            BoardCoord(-1, 1),
+        ],
+        Pawn | Rook | Bishop | Queen => panic!("Expected a Knight or a King, got {:?}", piece),
+    }
+}
+
+/// Return true if `pos` would be actually on the board.
 pub fn on_board(pos: BoardCoord) -> bool {
     0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
 }
 
+/// Return true if `pos` would be actually on the board.
+pub fn on_board_i8(pos: (i8, i8)) -> bool {
+    0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
+}
+
+impl fmt::Display for MoveList {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord(j, 7 - i);
+                if self.0.contains(&coord) {
+                    write!(f, "## ")?;
+                } else {
+                    write!(f, ".. ")?;
+                }
+            }
+            writeln!(f, "")?;
+        }
+        Ok(())
+    }
+}
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -374,6 +447,8 @@ impl fmt::Display for Tile {
 }
 
 impl Tile {
+    /// Return a string representation of this Tile (currently uses unicode
+    /// chess piece characters)
     pub fn as_str(&self) -> &'static str {
         use PieceType::*;
         match self.0 {
@@ -397,6 +472,7 @@ pub struct Piece {
     piece: PieceType,
 }
 
+/// The available player colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     White,
@@ -404,6 +480,8 @@ pub enum Color {
 }
 
 impl Color {
+    /// Returns 1 if White, -1 if Black. This is used to indicate the direction
+    /// that pieces move in (particularly the Pawn)
     fn direction(self) -> i8 {
         match self {
             Color::White => 1,
@@ -421,6 +499,7 @@ impl fmt::Display for Color {
     }
 }
 
+/// An enum that describes the six possible pieces
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PieceType {
     Pawn,
@@ -429,37 +508,6 @@ pub enum PieceType {
     Rook,
     Queen,
     King,
-}
-
-/// Return a list of valid movement deltas (offsets from the piece) given a
-/// PieceType. Move deltas DO NOT take into account the piece's color.
-/// This function returns Err on Rook, Bishop, and Queen
-fn get_move_deltas(piece: PieceType) -> Result<Vec<BoardCoord>, &'static str> {
-    use PieceType::*;
-    match piece {
-        Pawn => Ok(vec![BoardCoord(0, 1)]),
-        Knight => Ok(vec![
-            BoardCoord(1, 2),
-            BoardCoord(2, 1),
-            BoardCoord(-1, 2),
-            BoardCoord(-2, 1),
-            BoardCoord(1, -2),
-            BoardCoord(2, -1),
-            BoardCoord(-1, -2),
-            BoardCoord(-2, -1),
-        ]),
-        King => Ok(vec![
-            BoardCoord(0, 1),
-            BoardCoord(1, 1),
-            BoardCoord(1, 0),
-            BoardCoord(1, -1),
-            BoardCoord(0, -1),
-            BoardCoord(-1, -1),
-            BoardCoord(-1, 0),
-            BoardCoord(-1, 1),
-        ]),
-        Rook | Bishop | Queen => Err("Can't get move deltas for Rooks/Bishops/Kings"),
-    }
 }
 
 impl fmt::Display for PieceType {
