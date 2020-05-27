@@ -6,10 +6,18 @@ use ggez::{graphics, Context, GameResult};
 
 use crate::board::*;
 
+const RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 1.0);
+const GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 1.0);
+const BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 1.0);
+const WHITE: graphics::Color = graphics::Color::new(1.0, 1.0, 1.0, 1.0);
+const LIGHT_GREY: graphics::Color = graphics::Color::new(0.5, 0.5, 0.5, 1.0);
+const DARK_GREY: graphics::Color = graphics::Color::new(0.25, 0.25, 0.25, 1.0);
+const BLACK: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
+const TRANSPARENT: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 0.0);
+
 #[derive(Debug, Clone)]
 pub struct Grid {
     square_size: f32,
-    color: graphics::Color,
     offset: mint::Point2<f32>,
     dragging: Option<BoardCoord>,
     drop_locations: Option<Vec<BoardCoord>>,
@@ -19,34 +27,49 @@ pub struct Grid {
 impl Grid {
     fn to_mesh(&self, ctx: &mut Context) -> graphics::Mesh {
         let mut mesh = graphics::MeshBuilder::new();
-        let draw_mode = graphics::DrawMode::stroke(1.0);
-        let green = graphics::Color::new(0.0, 1.0, 0.0, 1.0);
-        let blue = graphics::Color::new(0.0, 0.0, 1.0, 1.0);
+        let fill: graphics::DrawMode = graphics::DrawMode::fill();
+        let stroke_width = 10.0;
+        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
+        // Checkerboard (white square must appear on rightmost tile)
         for i in 0..8 {
             for j in 0..8 {
-                let x = j;
-                let y = 7 - i;
                 let rect = graphics::Rect::new(
                     j as f32 * self.square_size,
                     i as f32 * self.square_size,
                     self.square_size,
                     self.square_size,
                 );
+                if (i + j) % 2 == 1 {
+                    mesh.rectangle(fill, rect, LIGHT_GREY);
+                } else {
+                    mesh.rectangle(fill, rect, DARK_GREY);
+                }
+            }
+        }
+
+        // Mouse Highlight Stuff
+        for i in 0..8 {
+            for j in 0..8 {
+                let x = j;
+                let y = 7 - i;
+                let rect = graphics::Rect::new(
+                    j as f32 * self.square_size + stroke_width / 2.0,
+                    i as f32 * self.square_size + stroke_width / 2.0,
+                    self.square_size - stroke_width,
+                    self.square_size - stroke_width,
+                );
                 let coord = BoardCoord::new((x, y)).unwrap();
                 let mouse = input::mouse::position(ctx);
                 let mouse = self.to_grid_coord(mouse).ok();
                 // Color the dragged square green
                 if Some(coord) == self.dragging {
-                    mesh.rectangle(graphics::DrawMode::fill(), rect, green);
+                    mesh.rectangle(stroke, rect, GREEN);
                 // Color the currently highlighted square red
                 } else if Some(coord) == mouse {
-                    mesh.rectangle(graphics::DrawMode::fill(), rect, self.color);
+                    mesh.rectangle(stroke, rect, RED);
                 // Color the potential drop locations blue
                 } else if contains(&self.drop_locations, &coord) {
-                    mesh.rectangle(graphics::DrawMode::fill(), rect, blue);
-                // Color all other squares with a red outline
-                } else {
-                    mesh.rectangle(draw_mode, rect, self.color);
+                    mesh.rectangle(stroke, rect, BLUE);
                 }
             }
         }
@@ -77,12 +100,12 @@ impl Grid {
                 let mut text = graphics::Text::new(tile.as_str());
                 let text = text.set_font(font, graphics::Scale::uniform(50.0));
                 let location = self.to_screen_coord(BoardCoord(x, y))
-                    + na::Vector2::new(self.square_size * 0.5, self.square_size * 0.5);
+                    + na::Vector2::new(self.square_size * 0.42, self.square_size * 0.25);
                 let color = match tile.0 {
                     None => graphics::Color::new(0.0, 0.0, 0.0, 0.0),
                     Some(piece) => match piece.color {
-                        Color::Black => graphics::Color::new(1.0, 0.0, 0.0, 1.0),
-                        Color::White => graphics::Color::new(1.0, 1.0, 1.0, 1.0),
+                        Color::Black => BLACK,
+                        Color::White => WHITE,
                     },
                 };
                 graphics::draw(ctx, text, (location, color))?;
@@ -153,7 +176,6 @@ impl GameState {
 
         let grid = Grid {
             square_size: 70.0,
-            color: graphics::Color::new(1.0, 0.0, 0.0, 1.0),
             offset: mint::Point2 { x: 10.0, y: 10.0 },
             dragging: None,
             drop_locations: None,
