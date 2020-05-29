@@ -111,6 +111,15 @@ impl Grid {
                 graphics::draw(ctx, text, (location, color))?;
             }
         }
+        let text = match self.board.current_player {
+            Color::Black => "Black to move",
+            Color::White => "White to move",
+        };
+        let mut text = graphics::Text::new(text);
+        let text = text.set_font(font, graphics::Scale::uniform(40.0));
+        let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 50.0);
+        graphics::draw(ctx, text, (location, RED))?;
+
         Ok(())
     }
 
@@ -172,18 +181,18 @@ pub struct GameState {
 
 impl GameState {
     pub fn new(ctx: &mut Context) -> GameState {
-        // let board = vec![
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. BK .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. BR ..",
-        //     "BR .. .. WK .. .. BR ..",
-        //     ".. .. .. .. .. .. BR ..",
-        // ];
-        // let board = Board::from_string_vec(board);
-        let board = Board::default();
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. BK .. .. .. ..",
+            ".. .. .. .. BR .. .. ..",
+            ".. .. BR WK .. .. .. ..",
+            ".. .. .. .. BR .. .. ..",
+        ];
+        let board = Board::from_string_vec(board);
+        // let board = Board::default();
         let board = BoardState::new(board);
 
         let grid = Grid {
