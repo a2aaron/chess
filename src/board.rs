@@ -41,13 +41,8 @@ impl BoardState {
             White => Black,
             Black => White,
         };
-        Ok(())
-    }
 
-    /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
-    /// would be off the board.
-    pub fn get(&self, coord: BoardCoord) -> Tile {
-        self.board.get(coord)
+        Ok(())
     }
 
     /// Return the list of valid places the piece at `coord` can move. This
@@ -76,33 +71,29 @@ impl BoardState {
             return vec![];
         }
 
-        // First get the list of moves ignoring the check condition
-        let list = get_move_list_ignore_check(&self.board, coord).0;
-        println!("{:?}", list);
+        let list = get_move_list_ignore_check(&self.board, coord);
 
-        // next, for each attempted move, see if moving there would
-        // actually put the king in check. we need to actually move the
-        // piece there because we want to avoid the chance that the
-        // "old" king location causes a line of sight piece to be blocked
-        // EX: we have a board like this
-        // .. .. ..
-        // BR WK ..
-        // .. .. ..
-        // and WK attempts to move right. From this current board layout,
-        // BR can't attack the square to the right of WK (because WK
-        // blocks LoS), but it would be attacked if WK actually did move
-        // there.
-        let mut filtered_list = vec![];
-        for attempted_move in list {
-            let mut moved_board = self.board.clone();
-            moved_board.move_piece(coord, attempted_move);
-            let king_coord = moved_board.get_king(self.current_player).unwrap();
-            if moved_board.is_square_safe(self.current_player, &king_coord) {
-                filtered_list.push(attempted_move);
-            }
-        }
-        filtered_list
+        filter_check_causing_moves(&self.board, self.current_player, coord, list).0
     }
+
+    /// Returns if the current player is currently in checkmate
+    pub fn is_checkmate(&self) -> CheckmateState {
+        self.board.is_checkmate(self.current_player)
+    }
+
+    /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
+    /// would be off the board.
+    pub fn get(&self, coord: BoardCoord) -> Tile {
+        self.board.get(coord)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckmateState {
+    Normal,
+    Check,
+    Checkmate,
+    Stalemate,
 }
 
 /// Wrapper struct around an 8x8 array of Tiles. This represents the state of
@@ -208,6 +199,37 @@ impl Board {
         }
     }
 
+    /// Returns if the player is currently in checkmate
+    fn is_checkmate(&self, player: Color) -> CheckmateState {
+        use CheckmateState::*;
+        match (self.has_legal_moves(player), self.is_in_check(player)) {
+            (false, false) => Stalemate,
+            (false, true) => Checkmate,
+            (true, false) => Normal,
+            (true, true) => Check,
+        }
+    }
+
+    fn has_legal_moves(&self, player: Color) -> bool {
+        // TODO: this is also HILARIOUSLY INEFFICENT
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((j, i)).unwrap();
+                let tile = self.get(coord);
+                if tile.is_color(player) {
+                    if !get_move_list_with_check(self, player, coord).0.is_empty() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn is_in_check(&self, player: Color) -> bool {
+        !self.is_square_safe(player, &self.get_king(player).unwrap())
+    }
+
     /// Gets the piece located at the coordinates
     pub fn get(&self, BoardCoord(x, y): BoardCoord) -> Tile {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
@@ -225,7 +247,7 @@ impl Board {
         // TODO: this is hilariously inefficient
         for i in 0..8 {
             for j in 0..8 {
-                let coord = BoardCoord::new((i, j)).unwrap();
+                let coord = BoardCoord::new((j, i)).unwrap();
                 let tile = self.get(coord);
                 if tile.0.is_none() {
                     continue;
@@ -251,7 +273,7 @@ impl Board {
             for j in 0..8 {
                 let coord = BoardCoord::new((j, 7 - i)).unwrap();
                 let tile = self.get(coord);
-                if tile.is_type(PieceType::King) && tile.is_color(color) {
+                if tile.is(color, PieceType::King) {
                     return Some(coord);
                 }
             }
@@ -291,6 +313,47 @@ impl BoardCoord {
 
 /// A list of spaces that a piece may move to.
 pub struct MoveList(pub Vec<BoardCoord>);
+
+/// Return a MoveList of the piece located at `coord`.
+/// This function DOES check if a move made by the King would put the King into
+/// check.
+fn get_move_list_with_check(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
+    let list = get_move_list_ignore_check(&board, coord);
+    filter_check_causing_moves(&board, player, coord, list)
+}
+
+/// This function attempts to move the piece at `coord` to each destination
+/// in `move_list`, and removes the move if it would cause the King of `color`
+/// to be in check.
+fn filter_check_causing_moves(
+    board: &Board,
+    color: Color,
+    coord: BoardCoord,
+    move_list: MoveList,
+) -> MoveList {
+    // for each attempted move, see if moving there would
+    // actually put the king in check. we need to actually move the
+    // piece there because we want to avoid the chance that the
+    // "old" king location causes a line of sight piece to be blocked
+    // EX: we have a board like this
+    // .. .. ..
+    // BR WK ..
+    // .. .. ..
+    // and WK attempts to move right. From this current board layout,
+    // BR can't attack the square to the right of WK (because WK
+    // blocks LoS), but it would be attacked if WK actually did move
+    // there.
+    let mut filtered_list = vec![];
+    for attempted_move in move_list.0 {
+        let mut moved_board = board.clone();
+        moved_board.move_piece(coord, attempted_move);
+        let king_coord = moved_board.get_king(color).unwrap();
+        if moved_board.is_square_safe(color, &king_coord) {
+            filtered_list.push(attempted_move);
+        }
+    }
+    MoveList(filtered_list)
+}
 
 /// Return a MoveList of the piece located at `coord`. This function assumes
 /// that the player to move is whatever the color of the piece at `coord` is.
@@ -511,6 +574,15 @@ pub struct Tile(pub Option<Piece>);
 
 impl Tile {
     /// Returns true if the `Tile` actually has a piece and
+    /// `color` and `piece_type` match.
+    pub fn is(&self, color: Color, piece_type: PieceType) -> bool {
+        match self.0 {
+            None => false,
+            Some(piece) => piece.color == color && piece.piece == piece_type,
+        }
+    }
+
+    /// Returns true if the `Tile` actually has a piece and
     /// `color` matches the color of the piece.
     fn is_color(&self, color: Color) -> bool {
         match self.0 {
@@ -575,6 +647,13 @@ impl Color {
         match self {
             Color::White => 1,
             Color::Black => -1,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Color::White => "White",
+            Color::Black => "Black",
         }
     }
 }

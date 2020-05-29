@@ -39,7 +39,14 @@ impl Grid {
                     self.square_size,
                     self.square_size,
                 );
-                if (i + j) % 2 == 1 {
+                let coord = BoardCoord::new((j, 7 - i)).unwrap();
+                let tile = self.board.get(coord);
+                // Color the king if it's in check
+                if self.board.is_checkmate() != CheckmateState::Normal
+                    && tile.is(self.board.current_player, PieceType::King)
+                {
+                    mesh.rectangle(fill, rect, RED);
+                } else if (i + j) % 2 == 1 {
                     mesh.rectangle(fill, rect, LIGHT_GREY);
                 } else {
                     mesh.rectangle(fill, rect, DARK_GREY);
@@ -58,6 +65,7 @@ impl Grid {
                     self.square_size - stroke_width,
                     self.square_size - stroke_width,
                 );
+
                 let coord = BoardCoord::new((x, y)).unwrap();
                 let mouse = input::mouse::position(ctx);
                 let mouse = self.to_grid_coord(mouse).ok();
@@ -119,7 +127,17 @@ impl Grid {
         let text = text.set_font(font, graphics::Scale::uniform(40.0));
         let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 50.0);
         graphics::draw(ctx, text, (location, RED))?;
-
+        let player_str = self.board.current_player.as_str();
+        let text = match self.board.is_checkmate() {
+            CheckmateState::Stalemate => [player_str, " is in stalemate!"].concat(),
+            CheckmateState::Checkmate => [player_str, " is in checkmate!"].concat(),
+            CheckmateState::Check => [player_str, " is in check!"].concat(),
+            CheckmateState::Normal => [player_str, " is not in check."].concat(),
+        };
+        let mut text = graphics::Text::new(text);
+        let text = text.set_font(font, graphics::Scale::uniform(20.0));
+        let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 200.0);
+        graphics::draw(ctx, text, (location, RED))?;
         Ok(())
     }
 
