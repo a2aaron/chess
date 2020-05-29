@@ -52,26 +52,56 @@ impl BoardState {
 
     /// Return the list of valid places the piece at `coord` can move. This
     /// function takes into account `current_player`. Note that the returned
-    /// vector is empty if any of the follow are true
+    /// vector is empty if any of the follow are true.
     /// - `coord` is off the board
     /// - `coord` refers to an empty tile
     /// - `coord` refers to a piece that is the opposite color of `current_player`
     /// - `coord` refers to a piece that has nowhere to move
+    /// Also note that this function DOES check if the move would place the
+    /// king into check.
     pub fn get_move_list(&self, coord: BoardCoord) -> Vec<BoardCoord> {
         if !on_board(coord) {
             return vec![];
         }
 
+        // If not a piece
         let tile = self.board.get(coord).0;
         if tile.is_none() {
             return vec![];
         }
+
+        // If not a piece of the player's color
         let piece = tile.unwrap();
         if piece.color != self.current_player {
             return vec![];
         }
 
-        get_move_list(&self.board, coord).0
+        // First get the list of moves ignoring the check condition
+        let list = get_move_list_ignore_check(&self.board, coord).0;
+        println!("{:?}", list);
+
+        // next, for each attempted move, see if moving there would
+        // actually put the king in check. we need to actually move the
+        // piece there because we want to avoid the chance that the
+        // "old" king location causes a line of sight piece to be blocked
+        // EX: we have a board like this
+        // .. .. ..
+        // BR WK ..
+        // .. .. ..
+        // and WK attempts to move right. From this current board layout,
+        // BR can't attack the square to the right of WK (because WK
+        // blocks LoS), but it would be attacked if WK actually did move
+        // there.
+        let mut filtered_list = vec![];
+        for attempted_move in list {
+            let mut moved_board = self.board.clone();
+            moved_board.move_piece(coord, attempted_move);
+            let king_coord = moved_board.get_king(self.current_player).unwrap();
+            if moved_board.is_square_safe(self.current_player, &king_coord) {
+                filtered_list.push(attempted_move);
+            }
+        }
+        filtered_list
     }
 }
 
@@ -169,7 +199,7 @@ impl Board {
         if start_piece.color != player {
             return Err("You aren't Caliborn");
         }
-        let valid_end_spots = get_move_list(self, start).0;
+        let valid_end_spots = get_move_list_ignore_check(self, start).0;
 
         if valid_end_spots.contains(&end) {
             Ok(())
@@ -188,6 +218,45 @@ impl Board {
     fn set(&mut self, BoardCoord(x, y): BoardCoord, piece: Tile) {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
         self.board[(7 - y) as usize][x as usize] = piece;
+    }
+
+    /// Returns true if no piece of the opposite color threatens the square.
+    fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
+        // TODO: this is hilariously inefficient
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((i, j)).unwrap();
+                let tile = self.get(coord);
+                if tile.0.is_none() {
+                    continue;
+                }
+                let piece = tile.0.unwrap();
+                if piece.color != color {
+                    let move_list = get_move_list_ignore_check(self, coord);
+                    if move_list.0.contains(&check_coord) {
+                        return false;
+                    } else {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Attempts to return the coordinates the king of the specified color
+    fn get_king(&self, color: Color) -> Option<BoardCoord> {
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((j, 7 - i)).unwrap();
+                let tile = self.get(coord);
+                if tile.is_type(PieceType::King) && tile.is_color(color) {
+                    return Some(coord);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -225,7 +294,9 @@ pub struct MoveList(pub Vec<BoardCoord>);
 
 /// Return a MoveList of the piece located at `coord`. This function assumes
 /// that the player to move is whatever the color of the piece at `coord` is.
-fn get_move_list(board: &Board, coord: BoardCoord) -> MoveList {
+/// This function does NOT check if a move made by the King would put the King into
+/// check.
+fn get_move_list_ignore_check(board: &Board, coord: BoardCoord) -> MoveList {
     let piece = board.get(coord).0;
     use PieceType::*;
     match piece {
@@ -235,6 +306,7 @@ fn get_move_list(board: &Board, coord: BoardCoord) -> MoveList {
             Knight | King => {
                 check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece))
             }
+
             Bishop | Rook | Queen => {
                 check_line_of_sight_piece(board, coord, piece.color, get_los(piece.piece))
             }
@@ -437,16 +509,25 @@ impl fmt::Display for MoveList {
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct Tile(pub Option<Piece>);
 
-impl fmt::Display for Tile {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Tile {
+    /// Returns true if the `Tile` actually has a piece and
+    /// `color` matches the color of the piece.
+    fn is_color(&self, color: Color) -> bool {
         match self.0 {
-            Some(piece) => write!(f, "{}{}", piece.color, piece.piece),
-            None => write!(f, ".."),
+            None => false,
+            Some(piece) => piece.color == color,
         }
     }
-}
 
-impl Tile {
+    /// Returns true if the `Tile` actually has a piece and
+    /// `piece` matches the `PieceType` of the piece.
+    fn is_type(&self, piece_type: PieceType) -> bool {
+        match self.0 {
+            None => false,
+            Some(piece) => piece.piece == piece_type,
+        }
+    }
+
     /// Return a string representation of this Tile (currently uses unicode
     /// chess piece characters)
     pub fn as_str(&self) -> &'static str {
@@ -465,6 +546,14 @@ impl Tile {
     }
 }
 
+impl fmt::Display for Tile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            Some(piece) => write!(f, "{}{}", piece.color, piece.piece),
+            None => write!(f, ".."),
+        }
+    }
+}
 /// A chess piece which has a color and the type of piece it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Piece {
@@ -819,7 +908,7 @@ mod tests {
         let coord = BoardCoord(coord.0, coord.1);
         let board = Board::from_string_vec(board);
         let expected = to_move_list(expected);
-        let move_list = get_move_list(&board, coord);
+        let move_list = get_move_list_ignore_check(&board, coord);
         println!("Board\n{}", board);
         println!("Actual Move List");
         println!("{}", &move_list);

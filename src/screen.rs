@@ -172,7 +172,19 @@ pub struct GameState {
 
 impl GameState {
     pub fn new(ctx: &mut Context) -> GameState {
-        let board = BoardState::new(Board::default());
+        // let board = vec![
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. BK .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. BR ..",
+        //     "BR .. .. WK .. .. BR ..",
+        //     ".. .. .. .. .. .. BR ..",
+        // ];
+        // let board = Board::from_string_vec(board);
+        let board = Board::default();
+        let board = BoardState::new(board);
 
         let grid = Grid {
             square_size: 70.0,
