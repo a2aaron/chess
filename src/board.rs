@@ -279,7 +279,8 @@ impl Board {
     }
 
     /// Attempts to return the coordinates the king of the specified color
-    fn get_king(&self, color: Color) -> Option<BoardCoord> {
+    /// TODO: MAKE NOT PUBLIC
+    pub fn get_king(&self, color: Color) -> Option<BoardCoord> {
         for i in 0..8 {
             for j in 0..8 {
                 let coord = BoardCoord::new((j, 7 - i)).unwrap();
