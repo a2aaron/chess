@@ -83,7 +83,7 @@ impl BoardState {
 
     /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
     /// would be off the board.
-    pub fn get(&self, coord: BoardCoord) -> Tile {
+    pub fn get(&self, coord: BoardCoord) -> &Tile {
         self.board.get(coord)
     }
 }
@@ -168,11 +168,8 @@ impl Board {
     /// the piece, even if it would not be actually legal to do so in a real
     /// game, so you should check the move first with `check_move`
     pub fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        let old_piece = self.get(start);
-        let moved_piece = Tile(Some(Piece {
-            has_moved: true,
-            ..old_piece.0.unwrap()
-        }));
+        let mut moved_piece = *self.get(start);
+        moved_piece.set_moved(true);
         self.set(end, moved_piece);
         self.set(start, Tile(None));
     }
@@ -239,9 +236,15 @@ impl Board {
     }
 
     /// Gets the piece located at the coordinates
-    pub fn get(&self, BoardCoord(x, y): BoardCoord) -> Tile {
+    pub fn get(&self, BoardCoord(x, y): BoardCoord) -> &Tile {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
-        self.board[(7 - y) as usize][x as usize]
+        &self.board[(7 - y) as usize][x as usize]
+    }
+
+    /// Gets mutably the piece located at the coordinates
+    pub fn get_mut(&mut self, BoardCoord(x, y): BoardCoord) -> &mut Tile {
+        // i promise very very hard that this i8 is, in fact, in the range 0-7
+        &mut self.board[(7 - y) as usize][x as usize]
     }
 
     /// Sets the piece located at the coordinates
@@ -592,6 +595,18 @@ impl fmt::Display for MoveList {
 pub struct Tile(pub Option<Piece>);
 
 impl Tile {
+    /// Set the `has_moved` field to `set`. If this `Tile` is `None`, nothing happens
+    pub fn set_moved(&mut self, set: bool) {
+        if let Some(piece) = &mut self.0 {
+            piece.has_moved = set;
+        } else {
+            panic!(
+                "Expected Tile to be Some piece, got None instead. set = {}",
+                set
+            );
+        }
+    }
+
     /// Returns true if the `Tile` actually has a piece and
     /// `color` and `piece_type` match.
     pub fn is(&self, color: Color, piece_type: PieceType) -> bool {
@@ -737,6 +752,7 @@ mod tests {
             Tile(Some(Piece {
                 piece: PieceType::Pawn,
                 color: Color::White,
+                has_moved: false,
             })),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
@@ -759,6 +775,7 @@ mod tests {
             Tile(Some(Piece {
                 piece: PieceType::Pawn,
                 color: Color::White,
+                has_moved: false,
             })),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
@@ -775,6 +792,7 @@ mod tests {
             Tile(Some(Piece {
                 piece: PieceType::Pawn,
                 color: Color::White,
+                has_moved: false,
             })),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
@@ -792,7 +810,7 @@ mod tests {
         ];
         #[rustfmt::skip]
         let expected = vec![
-            ".. .. ..",
+            ".. ## ..",
             ".. ## ..",
             ".. WP ..",
             ".. .. ..",
@@ -814,9 +832,30 @@ mod tests {
             ".. .. ..",
             ".. BP ..",
             ".. ## ..",
-            ".. .. ..",
+            ".. ## ..",
         ];
         assert_valid_movement(board, (1, 2), expected);
+    }
+
+    #[test]
+    fn test_pawn_single_move() {
+        #[rustfmt::skip]
+        let board = vec![
+            ".. .. ..",
+            ".. .. ..",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        let mut board = Board::from_string_vec(board);
+        board.get_mut(BoardCoord(1, 1)).set_moved(true);
+        #[rustfmt::skip]
+        let expected = vec![
+            ".. .. ..",
+            ".. ## ..",
+            ".. WP ..",
+            ".. .. ..",
+        ];
+        assert_valid_movement_board(board, (1, 1), expected);
     }
 
     #[test]
@@ -1004,26 +1043,30 @@ mod tests {
     }
 
     fn assert_valid_movement(board: Vec<&str>, coord: (i8, i8), expected: Vec<&str>) {
-        let coord = BoardCoord(coord.0, coord.1);
         let board = Board::from_string_vec(board);
+        assert_valid_movement_board(board, coord, expected);
+    }
+
+    fn assert_valid_movement_board(board: Board, coord: (i8, i8), expected: Vec<&str>) {
+        use std::collections::HashSet;
+
+        let coord = BoardCoord(coord.0, coord.1);
         let expected = to_move_list(expected);
         let move_list = get_move_list_ignore_check(&board, coord);
-        println!("Board\n{}", board);
+        println!("Board\n{:#?}", board);
         println!("Actual Move List");
         println!("{}", &move_list);
         println!("Expected Move List");
         println!("{}", &expected);
 
-        let mut move_list_counts = HashMap::new();
+        let mut move_list_counts = HashSet::new();
         for ele in move_list.0 {
-            let entry = move_list_counts.entry(ele).or_insert(0);
-            *entry += 1;
+            move_list_counts.insert(ele);
         }
 
-        let mut expected_counts = HashMap::new();
+        let mut expected_counts = HashSet::new();
         for ele in expected.0 {
-            let entry = expected_counts.entry(ele).or_insert(0);
-            *entry += 1;
+            expected_counts.insert(ele);
         }
 
         assert_eq!(move_list_counts, expected_counts);
