@@ -14,6 +14,7 @@ pub struct BoardState {
     dead_white: Vec<Piece>,
     black_has_castle: bool,
     white_has_castle: bool,
+    pub checkmate: CheckmateState,
 }
 
 impl BoardState {
@@ -27,6 +28,7 @@ impl BoardState {
             dead_white: Vec::new(),
             black_has_castle: true,
             white_has_castle: true,
+            checkmate: CheckmateState::Normal,
         }
     }
 
@@ -41,6 +43,9 @@ impl BoardState {
             White => Black,
             Black => White,
         };
+
+        // Update the checkmate status
+        self.checkmate = self.board.is_checkmate(self.current_player);
 
         Ok(())
     }
@@ -74,11 +79,6 @@ impl BoardState {
         let list = get_move_list_ignore_check(&self.board, coord);
 
         filter_check_causing_moves(&self.board, self.current_player, coord, list).0
-    }
-
-    /// Returns if the current player is currently in checkmate
-    pub fn is_checkmate(&self) -> CheckmateState {
-        self.board.is_checkmate(self.current_player)
     }
 
     /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`

@@ -42,7 +42,7 @@ impl Grid {
                 let coord = BoardCoord::new((j, 7 - i)).unwrap();
                 let tile = self.board.get(coord);
                 // Color the king if it's in check
-                if self.board.is_checkmate() != CheckmateState::Normal
+                if self.board.checkmate != CheckmateState::Normal
                     && tile.is(self.board.current_player, PieceType::King)
                 {
                     mesh.rectangle(fill, rect, RED);
@@ -84,16 +84,21 @@ impl Grid {
         mesh.build(ctx).unwrap()
     }
 
-    fn update(&mut self, last_mouse_down_pos: Option<mint::Point2<f32>>) {
-        self.dragging = match last_mouse_down_pos {
-            None => None,
-            Some(pos) => match self.to_grid_coord(pos) {
-                Err(_) => None,
-                Ok(coord) => Some(coord),
-            },
+    fn mouse_down_upd8(&mut self, last_mouse_down_pos: mint::Point2<f32>) {
+        self.dragging = match self.to_grid_coord(last_mouse_down_pos) {
+            Err(_) => None,
+            Ok(coord) => Some(coord),
         };
         self.drop_locations = self.dragging.map(|coord| self.board.get_move_list(coord));
     }
+
+    fn mouse_up_upd8(&mut self, last_mouse_up_pos: mint::Point2<f32>) {
+        self.move_piece(last_mouse_up_pos);
+        self.dragging = None;
+        self.drop_locations = None;
+    }
+
+    fn upd8(&mut self) {}
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         let mesh = self.to_mesh(ctx);
@@ -128,7 +133,7 @@ impl Grid {
         let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 50.0);
         graphics::draw(ctx, text, (location, RED))?;
         let player_str = self.board.current_player.as_str();
-        let text = match self.board.is_checkmate() {
+        let text = match self.board.checkmate {
             CheckmateState::Stalemate => [player_str, " is in stalemate!"].concat(),
             CheckmateState::Checkmate => [player_str, " is in checkmate!"].concat(),
             CheckmateState::Check => [player_str, " is in check!"].concat(),
@@ -160,8 +165,8 @@ impl Grid {
 
     /// Move a piece at the location of the last mouse down press to where the
     /// mouse currently is.
-    fn move_piece(&mut self, last_mouse_down_pos: mint::Point2<f32>) {
-        let drop_loc = self.to_grid_coord(last_mouse_down_pos);
+    fn move_piece(&mut self, mouse_pos: mint::Point2<f32>) {
+        let drop_loc = self.to_grid_coord(mouse_pos);
         if drop_loc.is_err() {
             return;
         }
@@ -199,18 +204,18 @@ pub struct GameState {
 
 impl GameState {
     pub fn new(ctx: &mut Context) -> GameState {
-        // let board = vec![
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. BK .. .. .. ..",
-        //     ".. .. .. .. BR .. .. ..",
-        //     ".. .. BR WK .. .. .. ..",
-        //     ".. .. .. .. BR .. .. ..",
-        // ];
-        // let board = Board::from_string_vec(board);
-        let board = Board::default();
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. WQ .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let board = Board::from_string_vec(board);
+        // let board = Board::default();
         let board = BoardState::new(board);
 
         let grid = Grid {
@@ -232,7 +237,7 @@ impl GameState {
 
 impl EventHandler for GameState {
     fn update(&mut self, _ctx: &mut Context) -> GameResult<()> {
-        self.grid.update(self.last_mouse_down_pos);
+        self.grid.upd8();
         Ok(())
     }
 
@@ -267,13 +272,15 @@ impl EventHandler for GameState {
         x: f32,
         y: f32,
     ) {
-        self.last_mouse_down_pos = Some(mint::Point2 { x, y });
+        let pos = mint::Point2 { x, y };
+        self.last_mouse_down_pos = Some(pos);
         self.last_mouse_up_pos = None;
+        self.grid.mouse_down_upd8(pos);
     }
 
     fn mouse_button_up_event(&mut self, _ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
         self.last_mouse_down_pos = None;
         self.last_mouse_up_pos = Some(mint::Point2 { x, y });
-        self.grid.move_piece(mint::Point2 { x, y });
+        self.grid.mouse_up_upd8(mint::Point2 { x, y });
     }
 }
