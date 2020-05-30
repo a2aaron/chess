@@ -199,18 +199,18 @@ pub struct GameState {
 
 impl GameState {
     pub fn new(ctx: &mut Context) -> GameState {
-        let board = vec![
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. BK .. .. .. ..",
-            ".. .. .. .. BR .. .. ..",
-            ".. .. BR WK .. .. .. ..",
-            ".. .. .. .. BR .. .. ..",
-        ];
-        let board = Board::from_string_vec(board);
-        // let board = Board::default();
+        // let board = vec![
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. BK .. .. .. ..",
+        //     ".. .. .. .. BR .. .. ..",
+        //     ".. .. BR WK .. .. .. ..",
+        //     ".. .. .. .. BR .. .. ..",
+        // ];
+        // let board = Board::from_string_vec(board);
+        let board = Board::default();
         let board = BoardState::new(board);
 
         let grid = Grid {
@@ -250,6 +250,13 @@ impl EventHandler for GameState {
         let (mousex, mousey) = (pos.x, pos.y);
         self.grid.draw(ctx, self.font)?;
         graphics::draw(ctx, &circle, (na::Point2::new(mousex, mousey),))?;
+
+        // FPS counter
+        let mut text = graphics::Text::new(format!("{}", ggez::timer::fps(ctx)));
+        let text = text.set_font(self.font, graphics::Scale::uniform(20.0));
+        let location = na::Point2::new(100.0, 500.0);
+        graphics::draw(ctx, text, (location, RED))?;
+
         graphics::present(ctx)
     }
 

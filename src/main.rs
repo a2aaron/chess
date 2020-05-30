@@ -15,7 +15,6 @@ pub fn read_string_from_stdin(message: Option<String>) -> String {
     input = input.trim().to_string(); // Remove trailing newline
     input
 }
-
 fn main() {
     let mut cb = ContextBuilder::new("chess", "a2aaron");
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
@@ -55,3 +54,4 @@ fn main() {
         Err(e) => println!("Error occured: {}", e),
     }
 }
+    

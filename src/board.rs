@@ -154,7 +154,11 @@ impl Board {
                 };
                 let x = j;
                 let y = i + (8 - str_board.len());
-                board.board[y][x] = Tile(piece.map(|piece| Piece { piece, color }));
+                board.board[y][x] = Tile(piece.map(|piece| Piece {
+                    piece,
+                    color,
+                    has_moved: false,
+                }));
             }
         }
         board
@@ -164,7 +168,11 @@ impl Board {
     /// the piece, even if it would not be actually legal to do so in a real
     /// game, so you should check the move first with `check_move`
     pub fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        let moved_piece = self.get(start);
+        let old_piece = self.get(start);
+        let moved_piece = Tile(Some(Piece {
+            has_moved: true,
+            ..old_piece.0.unwrap()
+        }));
         self.set(end, moved_piece);
         self.set(start, Tile(None));
     }
@@ -385,9 +393,20 @@ fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
 
     // Check forward space if it can be moved into.
     let forwards = BoardCoord(pos.0, pos.1 + color.direction());
+    let mut could_do_first_move = false;
     if on_board(forwards) {
         if board.get(forwards).0.is_none() {
             valid_end_pos.0.push(forwards);
+            could_do_first_move = true;
+        }
+    }
+
+    // if piece has not moved yet, check for double movement
+    let double_move = BoardCoord(pos.0, pos.1 + color.direction() * 2);
+    let pawn = board.get(pos).0.unwrap();
+    if on_board(double_move) {
+        if board.get(double_move).0.is_none() && !pawn.has_moved && could_do_first_move {
+            valid_end_pos.0.push(double_move);
         }
     }
 
@@ -631,6 +650,7 @@ impl fmt::Display for Tile {
 pub struct Piece {
     pub color: Color,
     piece: PieceType,
+    has_moved: bool,
 }
 
 /// The available player colors.
