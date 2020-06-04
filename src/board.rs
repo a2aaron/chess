@@ -1,11 +1,6 @@
 use std::fmt;
 
 // use ggez::Context;
-const WHITE_QUEENSIDE_ROOK: BoardCoord = BoardCoord(0, 0);
-const WHITE_KINGSIDE_ROOK: BoardCoord = BoardCoord(7, 0);
-const BLACK_QUEENSIDE_ROOK: BoardCoord = BoardCoord(0, 7);
-const BLACK_KINGSIDE_ROOK: BoardCoord = BoardCoord(7, 7);
-
 /// The overall board state, which keeps track of the various things each player
 /// can do, such as if they can castle, or what pieces are currently dead.
 #[derive(Debug, Clone)]
@@ -37,8 +32,16 @@ impl BoardState {
     /// It also sets `current_player` to the opposite color.
     pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
         use Color::*;
-        self.board.check_move(self.current_player, start, end)?;
-        self.board.move_piece(start, end);
+        match castle_type(start, end) {
+            Some((color, side)) => {
+                self.board.can_castle(color, side)?;
+                self.board.castle(color, side);
+            }
+            None => {
+                self.board.check_move(self.current_player, start, end)?;
+                self.board.move_piece(start, end);
+            }
+        }
 
         let castling_moves = self.board.castle_locations(self.current_player);
         println!("castling moves: {:?}", castling_moves);
@@ -63,6 +66,7 @@ impl BoardState {
     /// - `coord` refers to a piece that has nowhere to move
     /// Also note that this function DOES check if the move would place the
     /// king into check.
+    /// This function also DOES check if the King can castle.
     pub fn get_move_list(&self, coord: BoardCoord) -> Vec<BoardCoord> {
         if !on_board(coord) {
             return vec![];
@@ -82,7 +86,13 @@ impl BoardState {
 
         let list = get_move_list_ignore_check(&self.board, coord);
 
-        filter_check_causing_moves(&self.board, self.current_player, coord, list).0
+        let mut list = filter_check_causing_moves(&self.board, self.current_player, coord, list);
+        if piece.piece == PieceType::King {
+            list.0
+                .append(&mut self.board.castle_locations(self.current_player));
+        }
+
+        list.0
     }
 
     /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
@@ -178,6 +188,37 @@ impl Board {
         self.set(start, Tile(None));
     }
 
+    /// Castle the King of `color`. This function does not check if
+    /// doing so would actually be legal to do so in a real game, so you should
+    /// check the castle first with `can_castle`
+    fn castle(&mut self, color: Color, side: BoardSide) {
+        use BoardSide::*;
+        use Color::*;
+        let first_rank = match color {
+            White => 0,
+            Black => 7,
+        };
+
+        let king_start = BoardCoord(4, first_rank);
+        let king_end = match side {
+            Queenside => BoardCoord(2, first_rank),
+            Kingside => BoardCoord(6, first_rank),
+        };
+
+        let rook_start = match side {
+            Queenside => BoardCoord(0, first_rank),
+            Kingside => BoardCoord(7, first_rank),
+        };
+
+        let rook_end = match side {
+            Queenside => BoardCoord(3, first_rank),
+            Kingside => BoardCoord(5, first_rank),
+        };
+
+        self.move_piece(king_start, king_end);
+        self.move_piece(rook_start, rook_end);
+    }
+
     /// Check if the piece located at `start` can be legally be moved to
     /// `end`. This function assumes the player-to-move is whatever `player` is.
     /// This function returns `Ok(())` if the move is valid and `Err(&str)` if
@@ -226,7 +267,7 @@ impl Board {
                 let coord = BoardCoord::new((j, i)).unwrap();
                 let tile = self.get(coord);
                 if tile.is_color(player) {
-                    if !get_move_list_with_check(self, player, coord).0.is_empty() {
+                    if !get_move_list_full(self, player, coord).0.is_empty() {
                         return true;
                     }
                 }
@@ -313,28 +354,20 @@ impl Board {
         list
     }
 
-    /// Return a list of locations that the king may castle to. This function
-    /// returns tuples of BoardCoords, with the first being the king's end
-    /// location and the second being the rook's.
-    pub fn castle_locations(&self, color: Color) -> Vec<(BoardCoord, BoardCoord)> {
+    /// Return a list of locations that the king may castle to.
+    pub fn castle_locations(&self, color: Color) -> Vec<BoardCoord> {
         let mut castle_locs = vec![];
         let first_rank = match color {
             Color::White => 0,
             Color::Black => 7,
         };
 
-        let queenside_rook_loc = BoardCoord(0, first_rank);
-        if self.can_castle(color, queenside_rook_loc) {
-            let castle_end_loc = BoardCoord(2, first_rank);
-            let rook_end_loc = BoardCoord(3, first_rank);
-            castle_locs.push((castle_end_loc, rook_end_loc));
+        if self.can_castle(color, BoardSide::Queenside).is_ok() {
+            castle_locs.push(BoardCoord(2, first_rank));
         }
 
-        let kingside_rook_loc = BoardCoord(7, first_rank);
-        if self.can_castle(color, kingside_rook_loc) {
-            let castle_end_loc = BoardCoord(6, first_rank);
-            let rook_end_loc = BoardCoord(5, first_rank);
-            castle_locs.push((castle_end_loc, rook_end_loc));
+        if self.can_castle(color, BoardSide::Kingside).is_ok() {
+            castle_locs.push(BoardCoord(6, first_rank));
         }
 
         castle_locs
@@ -353,7 +386,7 @@ impl Board {
     ///   R . . . K . . R
     ///   0 1 2 3 4 5 6 7
     /// queenside kingside
-    fn can_castle(&self, color: Color, rook_coord: BoardCoord) -> bool {
+    fn can_castle(&self, color: Color, side: BoardSide) -> Result<(), &'static str> {
         let first_rank = match color {
             Color::White => 0,
             Color::Black => 7,
@@ -371,16 +404,20 @@ impl Board {
                 has_moved: false,
             }) if c == color => (),
             _ => {
-                println!("Can't castle, king is {:?}", king);
-                return false;
+                return Err("Can't castle, king is not an unmoved king");
             }
         }
 
         let king_is_safe = self.is_square_safe(color, &king_coord);
         if !king_is_safe {
-            println!("Can't castle, king is not safe");
-            return false;
+            return Err("Can't castle, king is in check");
         }
+
+        let side = match side {
+            BoardSide::Queenside => 0,
+            BoardSide::Kingside => 7,
+        };
+        let rook_coord = BoardCoord(side, first_rank);
 
         // rook_coord is actually a rook that has not moved
         let rook = self.get(rook_coord);
@@ -391,8 +428,7 @@ impl Board {
                 has_moved: false,
             }) if c == color => (),
             _ => {
-                println!("Can't castle, rook at {:?} is {:?}", rook_coord, rook);
-                return false;
+                return Err("Can't castle, rook is not an unmoved rook");
             }
         }
 
@@ -410,21 +446,18 @@ impl Board {
             let tile_safe = self.is_square_safe(color, &square);
             let tile_empty = self.get(square).0.is_none();
             if !tile_safe || !tile_empty {
-                println!(
-                    "Can't castle! square {:?} is {} {}",
-                    square, !tile_safe, !tile_empty
-                );
-                return false;
+                return Err("Can't castle, at least one square not empty or safe");
             }
         }
 
         // Additionally, if we are castling queenside, we need the tile just
         // to the left of the rook to be empty.
         let is_queenside = rook_coord == BoardCoord(0, first_rank);
-        if is_queenside {
-            return self.get(BoardCoord(1, first_rank)).0.is_none();
+        let queenside_space_empty = self.get(BoardCoord(1, first_rank)).0.is_none();
+        if is_queenside && !queenside_space_empty {
+            return Err("Can't castle, queenside rook space not empty");
         }
-        true
+        Ok(())
     }
 }
 
@@ -457,13 +490,33 @@ impl BoardCoord {
     }
 }
 
+/// Returns the color and side of the board that the move is a castle of.
+/// Returns None if the castle is not actually a castle.
+/// Note that a castle is expected to be a move starting on the king, so these
+/// are the only following castles
+/// start: (4, 0) end: (2, 0) - White Queenside
+/// start: (4, 0) end: (6, 0) - White Kingside
+/// start: (4, 7) end: (2, 7) - Black Queenside
+/// start: (4, 7) end: (6, 7) - Black Kingside
+fn castle_type(start: BoardCoord, end: BoardCoord) -> Option<(Color, BoardSide)> {
+    use BoardSide::*;
+    use Color::*;
+    match (start, end) {
+        (BoardCoord(4, 0), BoardCoord(2, 0)) => Some((White, Queenside)),
+        (BoardCoord(4, 0), BoardCoord(6, 0)) => Some((White, Kingside)),
+        (BoardCoord(4, 7), BoardCoord(2, 7)) => Some((Black, Queenside)),
+        (BoardCoord(4, 7), BoardCoord(6, 7)) => Some((Black, Kingside)),
+        _ => None,
+    }
+}
+
 /// A list of spaces that a piece may move to.
 pub struct MoveList(pub Vec<BoardCoord>);
 
 /// Return a MoveList of the piece located at `coord`.
 /// This function DOES check if a move made by the King would put the King into
-/// check.
-fn get_move_list_with_check(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
+/// check and DOES NOT check if the King can castle.
+fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
     let list = get_move_list_ignore_check(&board, coord);
     filter_check_causing_moves(&board, player, coord, list)
 }
@@ -724,6 +777,12 @@ impl fmt::Display for MoveList {
         Ok(())
     }
 }
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum BoardSide {
+    Queenside,
+    Kingside,
+}
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -871,9 +930,9 @@ impl fmt::Display for PieceType {
 }
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
+
+    /// STRING BOARDS
 
     #[test]
     fn test_from_string_vec() {
@@ -941,6 +1000,8 @@ mod tests {
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
     }
+
+    // MOVEMENT
 
     #[test]
     fn test_pawn_move() {
@@ -1185,6 +1246,13 @@ mod tests {
         assert_valid_movement(board, (3, 3), expected);
     }
 
+    // CASTLING TESTS
+
+    const WHITE_QUEENSIDE_ROOK: BoardCoord = BoardCoord(0, 0);
+    const WHITE_KINGSIDE_ROOK: BoardCoord = BoardCoord(7, 0);
+    const BLACK_QUEENSIDE_ROOK: BoardCoord = BoardCoord(0, 7);
+    const BLACK_KINGSIDE_ROOK: BoardCoord = BoardCoord(7, 7);
+
     #[test]
     fn test_castle_simple() {
         let board = vec![
@@ -1198,10 +1266,10 @@ mod tests {
             "WR .. .. .. WK .. .. WR",
         ];
         let board = Board::from_string_vec(board);
-        assert!(board.can_castle(Color::White, WHITE_KINGSIDE_ROOK));
-        assert!(board.can_castle(Color::White, WHITE_QUEENSIDE_ROOK));
-        assert!(board.can_castle(Color::Black, BLACK_KINGSIDE_ROOK));
-        assert!(board.can_castle(Color::Black, BLACK_QUEENSIDE_ROOK));
+        assert!(board.can_castle(Color::White, BoardSide::Queenside).is_ok());
+        assert!(board.can_castle(Color::White, BoardSide::Kingside).is_ok());
+        assert!(board.can_castle(Color::Black, BoardSide::Queenside).is_ok());
+        assert!(board.can_castle(Color::Black, BoardSide::Kingside).is_ok());
     }
 
     #[test]
@@ -1217,10 +1285,14 @@ mod tests {
             "WR WP .. .. WK .. WP WR",
         ];
         let board = Board::from_string_vec(board);
-        assert!(!board.can_castle(Color::White, WHITE_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::White, WHITE_QUEENSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_QUEENSIDE_ROOK));
+        assert!(board
+            .can_castle(Color::White, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::White, BoardSide::Kingside).is_err());
+        assert!(board
+            .can_castle(Color::Black, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::Black, BoardSide::Kingside).is_err());
     }
 
     #[test]
@@ -1236,10 +1308,14 @@ mod tests {
             "WR .. .. .. WK .. .. WR",
         ];
         let board = Board::from_string_vec(board);
-        assert!(!board.can_castle(Color::White, WHITE_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::White, WHITE_QUEENSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_QUEENSIDE_ROOK));
+        assert!(board
+            .can_castle(Color::White, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::White, BoardSide::Kingside).is_err());
+        assert!(board
+            .can_castle(Color::Black, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::Black, BoardSide::Kingside).is_err());
     }
 
     #[test]
@@ -1255,10 +1331,14 @@ mod tests {
             "WR .. .. .. WK .. .. WR",
         ];
         let board = Board::from_string_vec(board);
-        assert!(!board.can_castle(Color::White, WHITE_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::White, WHITE_QUEENSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_QUEENSIDE_ROOK));
+        assert!(board
+            .can_castle(Color::White, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::White, BoardSide::Kingside).is_err());
+        assert!(board
+            .can_castle(Color::Black, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::Black, BoardSide::Kingside).is_err());
     }
 
     #[test]
@@ -1274,8 +1354,8 @@ mod tests {
             "WR .. .. .. WK .. .. WR",
         ];
         let board = Board::from_string_vec(board);
-        assert!(board.can_castle(Color::White, WHITE_QUEENSIDE_ROOK));
-        assert!(board.can_castle(Color::Black, BLACK_QUEENSIDE_ROOK));
+        assert!(board.can_castle(Color::White, BoardSide::Queenside).is_ok());
+        assert!(board.can_castle(Color::Black, BoardSide::Queenside).is_ok());
     }
 
     #[test]
@@ -1294,10 +1374,14 @@ mod tests {
         board.get_mut(WHITE_QUEENSIDE_ROOK).set_moved(true);
         board.get_mut(BoardCoord(4, 7)).set_moved(true);
 
-        assert!(board.can_castle(Color::White, WHITE_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::White, WHITE_QUEENSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_KINGSIDE_ROOK));
-        assert!(!board.can_castle(Color::Black, BLACK_QUEENSIDE_ROOK));
+        assert!(board
+            .can_castle(Color::White, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::White, BoardSide::Kingside).is_ok());
+        assert!(board
+            .can_castle(Color::Black, BoardSide::Queenside)
+            .is_err());
+        assert!(board.can_castle(Color::Black, BoardSide::Kingside).is_err());
     }
 
     fn assert_valid_movement(board: Vec<&str>, coord: (i8, i8), expected: Vec<&str>) {

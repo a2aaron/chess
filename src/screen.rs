@@ -217,7 +217,9 @@ impl Grid {
         }
         let drop_loc = drop_loc.unwrap();
         if self.drop_locations.contains(&drop_loc) {
-            self.board.take_turn(self.dragging.unwrap(), drop_loc);
+            self.board
+                .take_turn(self.dragging.unwrap(), drop_loc)
+                .expect("Expected move to be Ok, got Err.");
         }
     }
 }
