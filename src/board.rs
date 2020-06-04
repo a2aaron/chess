@@ -188,37 +188,6 @@ impl Board {
         self.set(start, Tile(None));
     }
 
-    /// Castle the King of `color`. This function does not check if
-    /// doing so would actually be legal to do so in a real game, so you should
-    /// check the castle first with `can_castle`
-    fn castle(&mut self, color: Color, side: BoardSide) {
-        use BoardSide::*;
-        use Color::*;
-        let first_rank = match color {
-            White => 0,
-            Black => 7,
-        };
-
-        let king_start = BoardCoord(4, first_rank);
-        let king_end = match side {
-            Queenside => BoardCoord(2, first_rank),
-            Kingside => BoardCoord(6, first_rank),
-        };
-
-        let rook_start = match side {
-            Queenside => BoardCoord(0, first_rank),
-            Kingside => BoardCoord(7, first_rank),
-        };
-
-        let rook_end = match side {
-            Queenside => BoardCoord(3, first_rank),
-            Kingside => BoardCoord(5, first_rank),
-        };
-
-        self.move_piece(king_start, king_end);
-        self.move_piece(rook_start, rook_end);
-    }
-
     /// Check if the piece located at `start` can be legally be moved to
     /// `end`. This function assumes the player-to-move is whatever `player` is.
     /// This function returns `Ok(())` if the move is valid and `Err(&str)` if
@@ -249,109 +218,35 @@ impl Board {
         }
     }
 
-    /// Returns if the player is currently in checkmate
-    fn is_checkmate(&self, player: Color) -> CheckmateState {
-        use CheckmateState::*;
-        match (self.has_legal_moves(player), self.is_in_check(player)) {
-            (false, false) => Stalemate,
-            (false, true) => Checkmate,
-            (true, false) => Normal,
-            (true, true) => Check,
-        }
-    }
+    /// Castle the King of `color`. This function does not check if
+    /// doing so would actually be legal to do so in a real game, so you should
+    /// check the castle first with `can_castle`
+    fn castle(&mut self, color: Color, side: BoardSide) {
+        use BoardSide::*;
+        use Color::*;
+        let first_rank = match color {
+            White => 0,
+            Black => 7,
+        };
 
-    fn has_legal_moves(&self, player: Color) -> bool {
-        // TODO: this is also HILARIOUSLY INEFFICENT
-        for i in 0..8 {
-            for j in 0..8 {
-                let coord = BoardCoord::new((j, i)).unwrap();
-                let tile = self.get(coord);
-                if tile.is_color(player) {
-                    if !get_move_list_full(self, player, coord).0.is_empty() {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
+        let king_start = BoardCoord(4, first_rank);
+        let king_end = match side {
+            Queenside => BoardCoord(2, first_rank),
+            Kingside => BoardCoord(6, first_rank),
+        };
 
-    fn is_in_check(&self, player: Color) -> bool {
-        !self.is_square_safe(player, &self.get_king(player).unwrap())
-    }
+        let rook_start = match side {
+            Queenside => BoardCoord(0, first_rank),
+            Kingside => BoardCoord(7, first_rank),
+        };
 
-    /// Gets the piece located at the coordinates
-    pub fn get(&self, BoardCoord(x, y): BoardCoord) -> &Tile {
-        // i promise very very hard that this i8 is, in fact, in the range 0-7
-        &self.board[(7 - y) as usize][x as usize]
-    }
+        let rook_end = match side {
+            Queenside => BoardCoord(3, first_rank),
+            Kingside => BoardCoord(5, first_rank),
+        };
 
-    /// Gets mutably the piece located at the coordinates
-    pub fn get_mut(&mut self, BoardCoord(x, y): BoardCoord) -> &mut Tile {
-        // i promise very very hard that this i8 is, in fact, in the range 0-7
-        &mut self.board[(7 - y) as usize][x as usize]
-    }
-
-    /// Sets the piece located at the coordinates
-    fn set(&mut self, BoardCoord(x, y): BoardCoord, piece: Tile) {
-        // i promise very very hard that this i8 is, in fact, in the range 0-7
-        self.board[(7 - y) as usize][x as usize] = piece;
-    }
-
-    /// Returns true if no piece of the opposite color threatens the square.
-    fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
-        // TODO: this is hilariously inefficient
-        for i in 0..8 {
-            for j in 0..8 {
-                let coord = BoardCoord::new((j, i)).unwrap();
-                let tile = self.get(coord);
-                if tile.0.is_none() {
-                    continue;
-                }
-                let piece = tile.0.unwrap();
-                if piece.color != color {
-                    let move_list = get_move_list_ignore_check(self, coord);
-                    if move_list.0.contains(&check_coord) {
-                        return false;
-                    } else {
-                        continue;
-                    }
-                }
-            }
-        }
-
-        true
-    }
-
-    /// Attempts to return the coordinates the king of the specified color
-    /// TODO: MAKE MORE EFFICENT?
-    pub fn get_king(&self, color: Color) -> Option<BoardCoord> {
-        for i in 0..8 {
-            for j in 0..8 {
-                let coord = BoardCoord::new((j, 7 - i)).unwrap();
-                let tile = self.get(coord);
-                if tile.is(color, PieceType::King) {
-                    return Some(coord);
-                }
-            }
-        }
-        None
-    }
-
-    /// Returns a vector of all of coordinates of the pieces whose color and
-    /// piece match. This vector is empty if there are no pieces that match.
-    fn get_pieces(&self, color: Color, piece: PieceType) -> Vec<BoardCoord> {
-        let mut list = vec![];
-        for i in 0..8 {
-            for j in 0..8 {
-                let coord = BoardCoord::new((j, 7 - i)).unwrap();
-                let tile = self.get(coord);
-                if tile.is(color, piece) {
-                    list.push(coord);
-                }
-            }
-        }
-        list
+        self.move_piece(king_start, king_end);
+        self.move_piece(rook_start, rook_end);
     }
 
     /// Return a list of locations that the king may castle to.
@@ -459,6 +354,111 @@ impl Board {
         }
         Ok(())
     }
+
+    /// Returns true if no piece of the opposite color threatens the square.
+    fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
+        // TODO: this is hilariously inefficient
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((j, i)).unwrap();
+                let tile = self.get(coord);
+                if tile.0.is_none() {
+                    continue;
+                }
+                let piece = tile.0.unwrap();
+                if piece.color != color {
+                    let move_list = get_move_list_ignore_check(self, coord);
+                    if move_list.0.contains(&check_coord) {
+                        return false;
+                    } else {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Returns if the player is currently in checkmate
+    fn is_checkmate(&self, player: Color) -> CheckmateState {
+        use CheckmateState::*;
+        match (self.has_legal_moves(player), self.is_in_check(player)) {
+            (false, false) => Stalemate,
+            (false, true) => Checkmate,
+            (true, false) => Normal,
+            (true, true) => Check,
+        }
+    }
+
+    fn is_in_check(&self, player: Color) -> bool {
+        !self.is_square_safe(player, &self.get_king(player).unwrap())
+    }
+
+    fn has_legal_moves(&self, player: Color) -> bool {
+        // TODO: this is also HILARIOUSLY INEFFICENT
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((j, i)).unwrap();
+                let tile = self.get(coord);
+                if tile.is_color(player) {
+                    if !get_move_list_full(self, player, coord).0.is_empty() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Gets the piece located at the coordinates
+    pub fn get(&self, BoardCoord(x, y): BoardCoord) -> &Tile {
+        // i promise very very hard that this i8 is, in fact, in the range 0-7
+        &self.board[(7 - y) as usize][x as usize]
+    }
+
+    /// Gets mutably the piece located at the coordinates
+    pub fn get_mut(&mut self, BoardCoord(x, y): BoardCoord) -> &mut Tile {
+        // i promise very very hard that this i8 is, in fact, in the range 0-7
+        &mut self.board[(7 - y) as usize][x as usize]
+    }
+
+    /// Sets the piece located at the coordinates
+    fn set(&mut self, BoardCoord(x, y): BoardCoord, piece: Tile) {
+        // i promise very very hard that this i8 is, in fact, in the range 0-7
+        self.board[(7 - y) as usize][x as usize] = piece;
+    }
+
+    /// Attempts to return the coordinates the king of the specified color
+    /// TODO: MAKE MORE EFFICENT?
+    pub fn get_king(&self, color: Color) -> Option<BoardCoord> {
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((j, 7 - i)).unwrap();
+                let tile = self.get(coord);
+                if tile.is(color, PieceType::King) {
+                    return Some(coord);
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns a vector of all of coordinates of the pieces whose color and
+    /// piece match. This vector is empty if there are no pieces that match.
+    fn get_pieces(&self, color: Color, piece: PieceType) -> Vec<BoardCoord> {
+        let mut list = vec![];
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord::new((j, 7 - i)).unwrap();
+                let tile = self.get(coord);
+                if tile.is(color, piece) {
+                    list.push(coord);
+                }
+            }
+        }
+        list
+    }
 }
 
 impl fmt::Display for Board {
@@ -487,26 +487,6 @@ impl BoardCoord {
         } else {
             Err("Expected coordinates to be in range 0-7")
         }
-    }
-}
-
-/// Returns the color and side of the board that the move is a castle of.
-/// Returns None if the castle is not actually a castle.
-/// Note that a castle is expected to be a move starting on the king, so these
-/// are the only following castles
-/// start: (4, 0) end: (2, 0) - White Queenside
-/// start: (4, 0) end: (6, 0) - White Kingside
-/// start: (4, 7) end: (2, 7) - Black Queenside
-/// start: (4, 7) end: (6, 7) - Black Kingside
-fn castle_type(start: BoardCoord, end: BoardCoord) -> Option<(Color, BoardSide)> {
-    use BoardSide::*;
-    use Color::*;
-    match (start, end) {
-        (BoardCoord(4, 0), BoardCoord(2, 0)) => Some((White, Queenside)),
-        (BoardCoord(4, 0), BoardCoord(6, 0)) => Some((White, Kingside)),
-        (BoardCoord(4, 7), BoardCoord(2, 7)) => Some((Black, Queenside)),
-        (BoardCoord(4, 7), BoardCoord(6, 7)) => Some((Black, Kingside)),
-        _ => None,
     }
 }
 
@@ -782,6 +762,26 @@ impl fmt::Display for MoveList {
 pub enum BoardSide {
     Queenside,
     Kingside,
+}
+
+/// Returns the color and side of the board that the move is a castle of.
+/// Returns None if the castle is not actually a castle.
+/// Note that a castle is expected to be a move starting on the king, so these
+/// are the only following castles
+/// start: (4, 0) end: (2, 0) - White Queenside
+/// start: (4, 0) end: (6, 0) - White Kingside
+/// start: (4, 7) end: (2, 7) - Black Queenside
+/// start: (4, 7) end: (6, 7) - Black Kingside
+fn castle_type(start: BoardCoord, end: BoardCoord) -> Option<(Color, BoardSide)> {
+    use BoardSide::*;
+    use Color::*;
+    match (start, end) {
+        (BoardCoord(4, 0), BoardCoord(2, 0)) => Some((White, Queenside)),
+        (BoardCoord(4, 0), BoardCoord(6, 0)) => Some((White, Kingside)),
+        (BoardCoord(4, 7), BoardCoord(2, 7)) => Some((Black, Queenside)),
+        (BoardCoord(4, 7), BoardCoord(6, 7)) => Some((Black, Kingside)),
+        _ => None,
+    }
 }
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
