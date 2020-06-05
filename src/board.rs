@@ -930,14 +930,16 @@ fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
         Color::Black => (end.0 - start.0, -(end.1 - start.1)),
     };
 
-    match (piece.piece, delta) {
-        (PieceType::King, (-2, 0)) => Castle(piece.color, Queenside),
-        (PieceType::King, (2, 0)) => Castle(piece.color, Kingside),
-        (PieceType::Pawn(_), (0, 2)) => Lunge,
-        // TODO: This is wrong, you need to check if the move is also a
-        // normal captures
-        (PieceType::Pawn(_), (-1, 1)) => EnPassant(Queenside),
-        (PieceType::Pawn(_), (1, 1)) => EnPassant(Kingside),
+    let empty_end_pos = board.get(end).0.is_none();
+
+    match (piece.piece, delta, empty_end_pos) {
+        (PieceType::King, (-2, 0), _) => Castle(piece.color, Queenside),
+        (PieceType::King, (2, 0), _) => Castle(piece.color, Kingside),
+        (PieceType::Pawn(_), (0, 2), _) => Lunge,
+        // An enpassant move will always attempt to move into an empty square
+        // while a capture will move onto a nonempty square
+        (PieceType::Pawn(_), (-1, 1), true) => EnPassant(Queenside),
+        (PieceType::Pawn(_), (1, 1), true) => EnPassant(Kingside),
         _ => Normal,
     }
 }
