@@ -47,7 +47,7 @@ fn main() {
     // use when setting your game up.
 
     let mut game_state = screen::GameState::new(&mut ctx);
-
+    println!("{}", std::mem::size_of::<board::Tile>());
     // Run!
     match event::run(&mut ctx, &mut event_loop, &mut game_state) {
         Ok(_) => println!("Exited cleanly."),

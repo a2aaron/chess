@@ -216,11 +216,10 @@ impl Grid {
             return;
         }
         let drop_loc = drop_loc.unwrap();
-        if self.drop_locations.contains(&drop_loc) {
-            self.board
-                .take_turn(self.dragging.unwrap(), drop_loc)
-                .expect("Expected move to be Ok, got Err.");
-        }
+        println!(
+            "{:?}",
+            self.board.take_turn(self.dragging.unwrap(), drop_loc)
+        );
     }
 }
 
@@ -233,18 +232,18 @@ pub struct GameState {
 
 impl GameState {
     pub fn new(ctx: &mut Context) -> GameState {
-        let board = vec![
-            "BR .. .. .. BK .. .. BR",
-            "BN .. .. .. .. .. .. BN",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            "WN .. .. .. .. .. .. WN",
-            "WR .. .. .. WK .. .. WR",
-        ];
-        let board = Board::from_string_vec(board);
-        // let board = Board::default();
+        // let board = vec![
+        //     ".. .. .. .. .. .. WK ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. BK ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. BP .. BP .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     "WP .. .. .. WP .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        // ];
+        // let board = Board::from_string_vec(board);
+        let board = Board::default();
         let board = BoardState::new(board);
 
         let grid = Grid {

@@ -32,14 +32,37 @@ impl BoardState {
     /// It also sets `current_player` to the opposite color.
     pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
         use Color::*;
-        match castle_type(start, end) {
-            Some((color, side)) => {
+        use MoveType::*;
+        match move_type(&self.board, start, end) {
+            Castle(color, side) => {
                 self.board.can_castle(color, side)?;
+                // Clear the just lunged flags _after_ checking the move is valid
+                // That way, invalid moves don't try to clear the flag.
+                self.board.clear_just_lunged();
                 self.board.castle(color, side);
             }
-            None => {
+            Normal => {
                 self.board.check_move(self.current_player, start, end)?;
+                self.board.clear_just_lunged();
                 self.board.move_piece(start, end);
+            }
+            Lunge => {
+                // A lunge is just a special case for a normal move, so we don't
+                // really do anything cool here
+                self.board.check_move(self.current_player, start, end)?;
+                // Clear the old lunge flag before the new one
+                self.board.clear_just_lunged();
+                self.board.lunge(start);
+                println!("Lunged! {:?} {:?}", start, end);
+            }
+            EnPassant(side) => {
+                self.board
+                    .check_enpassant(self.current_player, start, side)?;
+                self.board.enpassant(start, end);
+
+                // Don't clear the lunge flag until _after_ we check for enpassant
+                // (otherwise we will never be able to :P)
+                self.board.clear_just_lunged();
             }
         }
 
@@ -87,9 +110,15 @@ impl BoardState {
         let list = get_move_list_ignore_check(&self.board, coord);
 
         let mut list = filter_check_causing_moves(&self.board, self.current_player, coord, list);
-        if piece.piece == PieceType::King {
-            list.0
-                .append(&mut self.board.castle_locations(self.current_player));
+        match piece.piece {
+            PieceType::King => {
+                list.0
+                    .append(&mut self.board.castle_locations(self.current_player));
+            }
+            PieceType::Pawn(_) => list
+                .0
+                .append(&mut self.board.enpassant_locations(self.current_player, coord)),
+            _ => {}
         }
 
         list.0
@@ -158,7 +187,7 @@ impl Board {
                 };
                 use PieceType::*;
                 let piece = match piece.chars().nth(1).unwrap() {
-                    'P' => Some(Pawn),
+                    'P' => Some(Pawn(false)),
                     'N' => Some(Knight),
                     'B' => Some(Bishop),
                     'R' => Some(Rook),
@@ -176,6 +205,17 @@ impl Board {
             }
         }
         board
+    }
+
+    /// Lunges the pawn located at `coord` two spaces forward. This function
+    /// always moves the pawn, even if would not actually be legal to do so in
+    /// a real game, so you should check the move first.
+    pub fn lunge(&mut self, coord: BoardCoord) {
+        let pawn = self.get_mut(coord);
+        pawn.set_just_lunged(true);
+        let direction = pawn.0.expect("Expected a pawn").color.direction();
+        let end = BoardCoord(coord.0, coord.1 + 2 * direction);
+        self.move_piece(coord, end);
     }
 
     /// Moves the piece located at `start` to `end`. This function always moves
@@ -201,13 +241,12 @@ impl Board {
         let start_piece = self.get(start);
 
         if start_piece.0.is_none() {
-            return Err("You aren't Roxy");
+            return Err("Can't move an empty tile");
         }
 
         let start_piece = start_piece.0.unwrap();
-        // You can't move a piece that isn't yours
         if start_piece.color != player {
-            return Err("You aren't Caliborn");
+            return Err("Can't move a piece that isn't yours");
         }
         let valid_end_spots = get_move_list_ignore_check(self, start).0;
 
@@ -355,6 +394,109 @@ impl Board {
         Ok(())
     }
 
+    /// Returns Ok if the move is a valid en passant. A player may en passant
+    /// only if the following are true
+    /// 1. The opposing player, in the previous turn, has just moved their pawn
+    /// two spaces (aka: the pawn has `just_lunged` set to true)
+    /// 2. The player has a capturing pawn on the fifth rank AND is in a file
+    /// adjacent to the moved pawn
+    /// 3. The player captures the opposing pawn on this turn.
+    fn check_enpassant(
+        &self,
+        player: Color,
+        capturing_pawn: BoardCoord,
+        direction: BoardSide,
+    ) -> Result<(), &'static str> {
+        use BoardSide::*;
+        use Color::*;
+        let fifth_rank = match player {
+            White => 4,
+            Black => 2,
+        };
+        // We expect that start and end are diagonal from each other
+        // and that the captured pawn is "one rank behind" the the end location
+        // where "behind" is relative to the player capturing.
+
+        let captured_pawn_coord = match direction {
+            Queenside => (capturing_pawn.0 - 1, capturing_pawn.1),
+            Kingside => (capturing_pawn.0 + 1, capturing_pawn.1),
+        };
+        let captured_pawn_coord = BoardCoord::new(captured_pawn_coord)?;
+
+        let capturing_pawn = self.get(capturing_pawn);
+        let captured_pawn = self.get(captured_pawn_coord);
+
+        match capturing_pawn.0 {
+            Some(Piece {
+                color: c,
+                piece: PieceType::Pawn(_),
+                has_moved: _,
+            }) if c == player => (),
+            _ => return Err("Capturing piece must be a pawn of the player's color"),
+        }
+
+        match captured_pawn.0 {
+            Some(Piece {
+                color: c,
+                piece: PieceType::Pawn(true),
+                has_moved: _,
+            }) if c != player => (),
+            _ => {
+                println!(
+                    "Got piece {:?}, {:?}, {:?}",
+                    captured_pawn, direction, captured_pawn_coord
+                );
+                return Err("Captured piece must be a pawn that just lunged of the opposite color");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Performs an en passant. This function does not check if this would be
+    /// an actually valid en passant, so you should do that by calling
+    /// `check_enpassant`. This function moves the piece located at `start`
+    /// to `end` and kills whatever piece is just behind the tile at `end`
+    /// where "behind" is defined relative to the piece being moved.
+    fn enpassant(&mut self, start: BoardCoord, end: BoardCoord) {
+        let direction = self.get(start).0.unwrap().color.direction();
+        let captured_pawn = BoardCoord(end.0, end.1 - direction);
+
+        self.move_piece(start, end);
+        self.set(captured_pawn, Tile::blank());
+    }
+
+    fn enpassant_locations(&self, player: Color, capturing_pawn: BoardCoord) -> Vec<BoardCoord> {
+        let mut locations = vec![];
+        if self
+            .check_enpassant(player, capturing_pawn, BoardSide::Queenside)
+            .is_ok()
+        {
+            locations.push(BoardCoord(
+                capturing_pawn.0 - 1,
+                capturing_pawn.1 + player.direction(),
+            ));
+        }
+        if self
+            .check_enpassant(player, capturing_pawn, BoardSide::Kingside)
+            .is_ok()
+        {
+            locations.push(BoardCoord(
+                capturing_pawn.0 + 1,
+                capturing_pawn.1 + player.direction(),
+            ));
+        }
+        locations
+    }
+
+    fn clear_just_lunged(&mut self) {
+        for i in 0..8 {
+            for j in 0..8 {
+                self.get_mut(BoardCoord(j, i)).set_just_lunged(false);
+            }
+        }
+    }
+
     /// Returns true if no piece of the opposite color threatens the square.
     fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
         // TODO: this is hilariously inefficient
@@ -399,7 +541,7 @@ impl Board {
         // TODO: this is also HILARIOUSLY INEFFICENT
         for i in 0..8 {
             for j in 0..8 {
-                let coord = BoardCoord::new((j, i)).unwrap();
+                let coord = BoardCoord(j, i);
                 let tile = self.get(coord);
                 if tile.is_color(player) {
                     if !get_move_list_full(self, player, coord).0.is_empty() {
@@ -544,7 +686,7 @@ fn get_move_list_ignore_check(board: &Board, coord: BoardCoord) -> MoveList {
     match piece {
         None => MoveList(vec![]),
         Some(piece) => match piece.piece {
-            Pawn => check_pawn(board, coord, piece.color),
+            Pawn(_) => check_pawn(board, coord, piece.color),
             Knight | King => {
                 check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece))
             }
@@ -668,7 +810,7 @@ fn get_los(piece: PieceType) -> Vec<Vec<BoardCoord>> {
         Rook => get_los_rook(),
         Bishop => get_los_bishop(),
         Queen => [get_los_rook(), get_los_bishop()].concat(),
-        Pawn | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
+        Pawn(_) | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
     }
 }
 
@@ -727,7 +869,7 @@ fn get_move_deltas(piece: PieceType) -> Vec<BoardCoord> {
             BoardCoord(-1, 0),
             BoardCoord(-1, 1),
         ],
-        Pawn | Rook | Bishop | Queen => panic!("Expected a Knight or a King, got {:?}", piece),
+        Pawn(_) | Rook | Bishop | Queen => panic!("Expected a Knight or a King, got {:?}", piece),
     }
 }
 
@@ -764,23 +906,37 @@ pub enum BoardSide {
     Kingside,
 }
 
-/// Returns the color and side of the board that the move is a castle of.
-/// Returns None if the castle is not actually a castle.
+enum MoveType {
+    Castle(Color, BoardSide),
+    Normal,
+    EnPassant(BoardSide),
+    Lunge,
+}
+
+/// Returns what kind of move this is, either normal, a castle, or an en passant
 /// Note that a castle is expected to be a move starting on the king, so these
 /// are the only following castles
-/// start: (4, 0) end: (2, 0) - White Queenside
-/// start: (4, 0) end: (6, 0) - White Kingside
-/// start: (4, 7) end: (2, 7) - Black Queenside
-/// start: (4, 7) end: (6, 7) - Black Kingside
-fn castle_type(start: BoardCoord, end: BoardCoord) -> Option<(Color, BoardSide)> {
+fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
     use BoardSide::*;
-    use Color::*;
-    match (start, end) {
-        (BoardCoord(4, 0), BoardCoord(2, 0)) => Some((White, Queenside)),
-        (BoardCoord(4, 0), BoardCoord(6, 0)) => Some((White, Kingside)),
-        (BoardCoord(4, 7), BoardCoord(2, 7)) => Some((Black, Queenside)),
-        (BoardCoord(4, 7), BoardCoord(6, 7)) => Some((Black, Kingside)),
-        _ => None,
+    use MoveType::*;
+    let tile = board.get(start);
+    if tile.0.is_none() {
+        return MoveType::Normal;
+    }
+    let piece = tile.0.unwrap();
+
+    let delta = match piece.color {
+        Color::White => (end.0 - start.0, end.1 - start.1),
+        Color::Black => (end.0 - start.0, -(end.1 - start.1)),
+    };
+
+    match (piece.piece, delta) {
+        (PieceType::King, (-2, 0)) => Castle(piece.color, Queenside),
+        (PieceType::King, (2, 0)) => Castle(piece.color, Kingside),
+        (PieceType::Pawn(_), (0, 2)) => Lunge,
+        (PieceType::Pawn(_), (-1, 1)) => EnPassant(Queenside),
+        (PieceType::Pawn(_), (1, 1)) => EnPassant(Kingside),
+        _ => Normal,
     }
 }
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
@@ -789,6 +945,18 @@ fn castle_type(start: BoardCoord, end: BoardCoord) -> Option<(Color, BoardSide)>
 pub struct Tile(pub Option<Piece>);
 
 impl Tile {
+    pub fn new(color: Color, piece: PieceType) -> Tile {
+        Tile(Some(Piece {
+            color,
+            piece,
+            has_moved: false,
+        }))
+    }
+
+    pub fn blank() -> Tile {
+        Tile(None)
+    }
+
     /// Set the `has_moved` field to `set`. If this `Tile` is `None`, nothing happens
     pub fn set_moved(&mut self, set: bool) {
         if let Some(piece) = &mut self.0 {
@@ -801,8 +969,18 @@ impl Tile {
         }
     }
 
+    /// Set `just_lunged` flag on Pawn if the tile is a pawn. Else, do nothing.
+    pub fn set_just_lunged(&mut self, set: bool) {
+        if let Some(piece) = &mut self.0 {
+            if let PieceType::Pawn(just_lunged) = &mut piece.piece {
+                *just_lunged = set;
+            }
+        }
+    }
+
     /// Returns true if the `Tile` actually has a piece and
-    /// `color` and `piece_type` match.
+    /// `color` and `piece_type` match. Note: the `just_lunged` flag on
+    /// the Pawn piecetype is ignored.
     pub fn is(&self, color: Color, piece_type: PieceType) -> bool {
         match self.0 {
             None => false,
@@ -828,7 +1006,8 @@ impl Tile {
     }
 
     /// Returns true if the `Tile` actually has a piece and
-    /// `piece` matches the `PieceType` of the piece.
+    /// `piece` matches the `PieceType` of the piece. Note: the `just_lunged`
+    /// flag on the Pawn piecetype is ignored.
     fn is_type(&self, piece_type: PieceType) -> bool {
         match self.0 {
             None => false,
@@ -843,7 +1022,7 @@ impl Tile {
         match self.0 {
             None => "",
             Some(piece) => match piece.piece {
-                Pawn => "♟",
+                Pawn(_) => "♟",
                 Knight => "♞",
                 Bishop => "♝",
                 Rook => "♜",
@@ -905,9 +1084,11 @@ impl fmt::Display for Color {
 }
 
 /// An enum that describes the six possible pieces
+/// `Pawn` has a `bool` associated with that is true if the piece has just
+/// lunged (moved two spaces) on the previous turn.S
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PieceType {
-    Pawn,
+    Pawn(bool),
     Knight,
     Bishop,
     Rook,
@@ -919,7 +1100,7 @@ impl fmt::Display for PieceType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use PieceType::*;
         match self {
-            Pawn => write!(f, "P"),
+            Pawn(_) => write!(f, "P"),
             Knight => write!(f, "N"),
             Bishop => write!(f, "B"),
             Rook => write!(f, "R"),
@@ -951,11 +1132,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(3, 3),
-            Tile(Some(Piece {
-                piece: PieceType::Pawn,
-                color: Color::White,
-                has_moved: false,
-            })),
+            Tile::new(Color::White, PieceType::Pawn(false)),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -974,11 +1151,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(3, 3),
-            Tile(Some(Piece {
-                piece: PieceType::Pawn,
-                color: Color::White,
-                has_moved: false,
-            })),
+            Tile::new(Color::White, PieceType::Pawn(false)),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -991,11 +1164,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(0, 0),
-            Tile(Some(Piece {
-                piece: PieceType::Pawn,
-                color: Color::White,
-                has_moved: false,
-            })),
+            Tile::new(Color::White, PieceType::Pawn(false)),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -1382,6 +1551,86 @@ mod tests {
             .can_castle(Color::Black, BoardSide::Queenside)
             .is_err());
         assert!(board.can_castle(Color::Black, BoardSide::Kingside).is_err());
+    }
+
+    // EN PASSANT TESTS
+    #[test]
+    fn test_en_passant() {
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. BP .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. WP .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let mut board = Board::from_string_vec(board);
+        board.lunge(BoardCoord(5, 6));
+        assert!(board
+            .check_enpassant(Color::White, BoardCoord(4, 4), BoardSide::Kingside)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_en_passant2() {
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. BP .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "WP .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let mut board = Board::from_string_vec(board);
+        board.lunge(BoardCoord(0, 1));
+        assert!(board
+            .check_enpassant(Color::Black, BoardCoord(1, 3), BoardSide::Queenside)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_en_passant_must_lunge() {
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. BP .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "WP .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let mut board = Board::from_string_vec(board);
+        board.move_piece(BoardCoord(0, 1), BoardCoord(0, 2));
+        board.move_piece(BoardCoord(0, 2), BoardCoord(0, 3));
+        assert!(board
+            .check_enpassant(Color::Black, BoardCoord(1, 3), BoardSide::Queenside)
+            .is_err());
+    }
+
+    #[test]
+    fn test_en_passant_must_be_same_turn() {
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. BP .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "WP .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let mut board = Board::from_string_vec(board);
+        board.lunge(BoardCoord(0, 1));
+        // simulate going to next turn without moving anything
+        board.clear_just_lunged();
+        assert!(board
+            .check_enpassant(Color::Black, BoardCoord(1, 3), BoardSide::Queenside)
+            .is_err());
     }
 
     fn assert_valid_movement(board: Vec<&str>, coord: (i8, i8), expected: Vec<&str>) {
