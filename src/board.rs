@@ -934,6 +934,8 @@ fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
         (PieceType::King, (-2, 0)) => Castle(piece.color, Queenside),
         (PieceType::King, (2, 0)) => Castle(piece.color, Kingside),
         (PieceType::Pawn(_), (0, 2)) => Lunge,
+        // TODO: This is wrong, you need to check if the move is also a
+        // normal captures
         (PieceType::Pawn(_), (-1, 1)) => EnPassant(Queenside),
         (PieceType::Pawn(_), (1, 1)) => EnPassant(Kingside),
         _ => Normal,

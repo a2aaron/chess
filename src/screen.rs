@@ -1,4 +1,5 @@
 use crate::board::*;
+
 use ggez::event::{EventHandler, MouseButton};
 use ggez::graphics::{self, DrawParam};
 use ggez::input;
@@ -157,7 +158,7 @@ impl Grid {
                 let location = self.to_screen_coord(BoardCoord(x, y))
                     + na::Vector2::new(self.square_size * 0.42, self.square_size * 0.25);
                 let color = match tile.0 {
-                    None => graphics::Color::new(0.0, 0.0, 0.0, 0.0),
+                    None => TRANSPARENT,
                     Some(piece) => match piece.color {
                         Color::Black => BLACK,
                         Color::White => WHITE,
@@ -173,21 +174,18 @@ impl Grid {
             Color::Black => "Black to move",
             Color::White => "White to move",
         };
-        let mut text = graphics::Text::new(text);
-        let text = text.set_font(font, graphics::Scale::uniform(40.0));
         let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 50.0);
-        graphics::draw(ctx, text, (location, RED))?;
+        draw_text(ctx, text, font, 40.0, (location, RED))?;
         let player_str = self.board.current_player.as_str();
+
         let text = match self.board.checkmate {
             CheckmateState::Stalemate => [player_str, " is in stalemate!"].concat(),
             CheckmateState::Checkmate => [player_str, " is in checkmate!"].concat(),
             CheckmateState::Check => [player_str, " is in check!"].concat(),
             CheckmateState::Normal => [player_str, " is not in check."].concat(),
         };
-        let mut text = graphics::Text::new(text);
-        let text = text.set_font(font, graphics::Scale::uniform(20.0));
         let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 200.0);
-        graphics::draw(ctx, text, (location, RED))?;
+        draw_text(ctx, text, font, 20.0, (location, RED))?;
         Ok(())
     }
 
@@ -223,7 +221,86 @@ impl Grid {
     }
 }
 
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+enum ButtonState {
+    Idle,
+    Hover,
+    Pressed,
+}
+
+pub struct TitleScreen {
+    hitbox: graphics::Rect,
+    state: ButtonState,
+}
+
+impl TitleScreen {
+    fn new() -> TitleScreen {
+        TitleScreen {
+            hitbox: graphics::Rect::new(100.0, 100.0, 1000.0, 35.0),
+            state: ButtonState::Idle,
+        }
+    }
+
+    fn upd8(&mut self, curr_pos: mint::Point2<f32>, mouse_pressed: bool) {
+        let over_button = self.hitbox.contains(curr_pos);
+        use ButtonState::*;
+        self.state = match (over_button, mouse_pressed) {
+            (false, _) => Idle,
+            (true, false) => Hover,
+            (true, true) => Pressed,
+        };
+    }
+
+    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
+        if self.state == ButtonState::Pressed && self.hitbox.contains(mouse_pos) {
+            *screen_state = ScreenState::InGame;
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+        let fill: graphics::DrawMode = graphics::DrawMode::fill();
+        let stroke_width = 10.0;
+        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
+
+        use ButtonState::*;
+        let inner_color = match self.state {
+            Idle => graphics::Color::from_rgb_u32(0x13ff00),
+            Hover => graphics::Color::from_rgb_u32(0x0ebf00),
+            Pressed => graphics::Color::from_rgb_u32(0x0c9f00),
+        };
+
+        let outer_color = BLACK;
+
+        let solid_rect = self.hitbox;
+        let mut mesh = graphics::MeshBuilder::new();
+        mesh.rectangle(fill, solid_rect, inner_color);
+        let solid_rect = mesh.build(ctx).unwrap();
+
+        graphics::draw(ctx, &solid_rect, DrawParam::default())?;
+
+        let mut mesh = graphics::MeshBuilder::new();
+        let hollow_rect = graphics::Rect::new(
+            stroke_width / 2.0,
+            stroke_width / 2.0,
+            self.hitbox.w - stroke_width,
+            self.hitbox.h - stroke_width,
+        );
+        mesh.rectangle(stroke, hollow_rect, outer_color);
+        let hollow_rect = mesh.build(ctx).unwrap();
+        graphics::draw(ctx, &hollow_rect, DrawParam::default())?;
+
+        Ok(())
+    }
+}
+
+pub enum ScreenState {
+    TitleScreen,
+    InGame,
+}
+
 pub struct GameState {
+    screen: ScreenState,
+    title_screen: TitleScreen,
     grid: Grid,
     font: graphics::Font,
     last_mouse_down_pos: Option<mint::Point2<f32>>, // Some(Point2<f32>) if mouse is pressed, else None
@@ -256,6 +333,8 @@ impl GameState {
         };
 
         GameState {
+            screen: ScreenState::TitleScreen,
+            title_screen: TitleScreen::new(),
             grid: grid,
             font: graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap(),
             last_mouse_down_pos: None,
@@ -265,8 +344,12 @@ impl GameState {
 }
 
 impl EventHandler for GameState {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult<()> {
+    fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         self.grid.upd8();
+        self.title_screen.upd8(
+            input::mouse::position(ctx),
+            input::mouse::button_pressed(ctx, MouseButton::Left),
+        );
         Ok(())
     }
 
@@ -282,14 +365,17 @@ impl EventHandler for GameState {
         )?;
         let pos = input::mouse::position(ctx);
         let (mousex, mousey) = (pos.x, pos.y);
-        self.grid.draw(ctx, self.font)?;
+
+        match self.screen {
+            ScreenState::TitleScreen => self.title_screen.draw(ctx, self.font)?,
+            ScreenState::InGame => self.grid.draw(ctx, self.font)?,
+        }
         graphics::draw(ctx, &circle, (na::Point2::new(mousex, mousey),))?;
 
         // FPS counter
-        let mut text = graphics::Text::new(format!("{}", ggez::timer::fps(ctx)));
-        let text = text.set_font(self.font, graphics::Scale::uniform(20.0));
+        let text = format!("{}", ggez::timer::fps(ctx));
         let location = na::Point2::new(100.0, 500.0);
-        graphics::draw(ctx, text, (location, RED))?;
+        draw_text(ctx, text, self.font, 20.0, (location, RED))?;
 
         graphics::present(ctx)
     }
@@ -304,12 +390,37 @@ impl EventHandler for GameState {
         let pos = mint::Point2 { x, y };
         self.last_mouse_down_pos = Some(pos);
         self.last_mouse_up_pos = None;
-        self.grid.mouse_down_upd8(pos);
+        match self.screen {
+            ScreenState::TitleScreen => (),
+            ScreenState::InGame => self.grid.mouse_down_upd8(pos),
+        }
     }
 
     fn mouse_button_up_event(&mut self, _ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
         self.last_mouse_down_pos = None;
         self.last_mouse_up_pos = Some(mint::Point2 { x, y });
-        self.grid.mouse_up_upd8(mint::Point2 { x, y });
+
+        match self.screen {
+            ScreenState::TitleScreen => self
+                .title_screen
+                .mouse_up_upd8(mint::Point2 { x, y }, &mut self.screen),
+            ScreenState::InGame => self.grid.mouse_up_upd8(mint::Point2 { x, y }),
+        }
     }
+}
+
+fn draw_text<T, S>(
+    ctx: &mut Context,
+    text: T,
+    font: graphics::Font,
+    scale: f32,
+    params: S,
+) -> GameResult<()>
+where
+    T: Into<graphics::TextFragment>,
+    S: Into<DrawParam>,
+{
+    let mut text = graphics::Text::new(text);
+    let text = text.set_font(font, graphics::Scale::uniform(scale));
+    graphics::draw(ctx, text, params)
 }
