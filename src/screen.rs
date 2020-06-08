@@ -231,15 +231,17 @@ enum ButtonState {
     Pressed,
 }
 
-pub struct TitleScreen {
+pub struct Button {
     hitbox: Rect,
+    text: String,
     state: ButtonState,
 }
 
-impl TitleScreen {
-    fn new() -> TitleScreen {
-        TitleScreen {
-            hitbox: center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.75, 300.0, 35.0),
+impl Button {
+    fn new(hitbox: Rect, text: &str) -> Button {
+        Button {
+            hitbox: hitbox,
+            text: text.to_owned(),
             state: ButtonState::Idle,
         }
     }
@@ -252,12 +254,6 @@ impl TitleScreen {
             (true, false) => Hover,
             (true, true) => Pressed,
         };
-    }
-
-    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
-        if self.state == ButtonState::Pressed && self.hitbox.contains(mouse_pos) {
-            *screen_state = ScreenState::InGame;
-        }
     }
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
@@ -293,10 +289,53 @@ impl TitleScreen {
 
         graphics::draw(ctx, &button, (dest,))?;
 
-        let text = "Start Game";
         let location = get_center(self.hitbox);
-        draw_text_centered(ctx, text, font, 20.0, (location, BLACK))?;
+        draw_text_centered(ctx, self.text.as_str(), font, 20.0, (location, BLACK))?;
 
+        Ok(())
+    }
+}
+
+pub struct TitleScreen {
+    start_game: Button,
+    quit_game: Button,
+}
+
+impl TitleScreen {
+    fn new() -> TitleScreen {
+        TitleScreen {
+            start_game: Button::new(
+                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.50, 300.0, 35.0),
+                "Start Game",
+            ),
+            quit_game: Button::new(
+                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.75, 300.0, 35.0),
+                "Quit Game",
+            ),
+        }
+    }
+
+    fn upd8(&mut self, curr_pos: mint::Point2<f32>, mouse_pressed: bool) {
+        self.start_game.upd8(curr_pos, mouse_pressed);
+        self.quit_game.upd8(curr_pos, mouse_pressed);
+    }
+
+    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
+        if self.start_game.state == ButtonState::Pressed
+            && self.start_game.hitbox.contains(mouse_pos)
+        {
+            *screen_state = ScreenState::InGame;
+        }
+
+        if self.quit_game.state == ButtonState::Pressed && self.quit_game.hitbox.contains(mouse_pos)
+        {
+            *screen_state = ScreenState::Quit;
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+        self.start_game.draw(ctx, font)?;
+        self.quit_game.draw(ctx, font)?;
         Ok(())
     }
 }
@@ -304,6 +343,7 @@ impl TitleScreen {
 pub enum ScreenState {
     TitleScreen,
     InGame,
+    Quit,
 }
 
 pub struct GameState {
@@ -353,11 +393,14 @@ impl GameState {
 
 impl EventHandler for GameState {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
-        self.grid.upd8();
-        self.title_screen.upd8(
-            input::mouse::position(ctx),
-            input::mouse::button_pressed(ctx, MouseButton::Left),
-        );
+        match self.screen {
+            ScreenState::TitleScreen => self.title_screen.upd8(
+                input::mouse::position(ctx),
+                input::mouse::button_pressed(ctx, MouseButton::Left),
+            ),
+            ScreenState::InGame => self.grid.upd8(),
+            ScreenState::Quit => ggez::event::quit(ctx),
+        }
         Ok(())
     }
 
@@ -377,6 +420,7 @@ impl EventHandler for GameState {
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.font)?,
             ScreenState::InGame => self.grid.draw(ctx, self.font)?,
+            ScreenState::Quit => (),
         }
         graphics::draw(ctx, &circle, (na::Point2::new(mousex, mousey),))?;
 
@@ -401,6 +445,7 @@ impl EventHandler for GameState {
         match self.screen {
             ScreenState::TitleScreen => (),
             ScreenState::InGame => self.grid.mouse_down_upd8(pos),
+            ScreenState::Quit => (),
         }
     }
 
@@ -413,6 +458,7 @@ impl EventHandler for GameState {
                 .title_screen
                 .mouse_up_upd8(mint::Point2 { x, y }, &mut self.screen),
             ScreenState::InGame => self.grid.mouse_up_upd8(mint::Point2 { x, y }),
+            ScreenState::Quit => (),
         }
     }
 }
