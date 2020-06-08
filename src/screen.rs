@@ -1,11 +1,14 @@
 use crate::board::*;
 
 use ggez::event::{EventHandler, MouseButton};
-use ggez::graphics::{self, DrawParam};
+use ggez::graphics::{self, DrawParam, Rect};
 use ggez::input;
 use ggez::mint;
 use ggez::nalgebra as na;
 use ggez::{Context, GameResult};
+
+pub const SCREEN_WIDTH: f32 = 800.0;
+pub const SCREEN_HEIGHT: f32 = 600.0;
 
 const RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 1.0);
 const GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 1.0);
@@ -32,7 +35,7 @@ impl Grid {
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
         for i in 0..8 {
             for j in 0..8 {
-                let rect = graphics::Rect::new(
+                let rect = Rect::new(
                     j as f32 * square_size,
                     i as f32 * square_size,
                     square_size,
@@ -53,7 +56,7 @@ impl Grid {
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
 
         let mut mesh = graphics::MeshBuilder::new();
-        let solid_rect = graphics::Rect::new(0.0, 0.0, self.square_size, self.square_size);
+        let solid_rect = Rect::new(0.0, 0.0, self.square_size, self.square_size);
         mesh.rectangle(fill, solid_rect, RED);
         let solid_rect = mesh.build(ctx).unwrap();
 
@@ -72,7 +75,7 @@ impl Grid {
         let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
 
         let mut mesh = graphics::MeshBuilder::new();
-        let hollow_rect = graphics::Rect::new(
+        let hollow_rect = Rect::new(
             stroke_width / 2.0,
             stroke_width / 2.0,
             self.square_size - stroke_width,
@@ -229,14 +232,14 @@ enum ButtonState {
 }
 
 pub struct TitleScreen {
-    hitbox: graphics::Rect,
+    hitbox: Rect,
     state: ButtonState,
 }
 
 impl TitleScreen {
     fn new() -> TitleScreen {
         TitleScreen {
-            hitbox: graphics::Rect::new(100.0, 100.0, 1000.0, 35.0),
+            hitbox: center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.75, 300.0, 35.0),
             state: ButtonState::Idle,
         }
     }
@@ -258,36 +261,41 @@ impl TitleScreen {
     }
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+        use ButtonState::*;
+
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
-        let stroke_width = 10.0;
+        let stroke_width = 3.0;
         let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
 
-        use ButtonState::*;
+        let outer_color = WHITE;
         let inner_color = match self.state {
             Idle => graphics::Color::from_rgb_u32(0x13ff00),
             Hover => graphics::Color::from_rgb_u32(0x0ebf00),
             Pressed => graphics::Color::from_rgb_u32(0x0c9f00),
         };
 
-        let outer_color = BLACK;
+        let dims = get_dims(self.hitbox);
+        let dest = self.hitbox.point();
 
-        let solid_rect = self.hitbox;
+        // Button BG
         let mut mesh = graphics::MeshBuilder::new();
-        mesh.rectangle(fill, solid_rect, inner_color);
-        let solid_rect = mesh.build(ctx).unwrap();
+        mesh.rectangle(fill, dims, inner_color);
 
-        graphics::draw(ctx, &solid_rect, DrawParam::default())?;
-
-        let mut mesh = graphics::MeshBuilder::new();
-        let hollow_rect = graphics::Rect::new(
+        // Button Border
+        let bounds = Rect::new(
             stroke_width / 2.0,
             stroke_width / 2.0,
             self.hitbox.w - stroke_width,
             self.hitbox.h - stroke_width,
         );
-        mesh.rectangle(stroke, hollow_rect, outer_color);
-        let hollow_rect = mesh.build(ctx).unwrap();
-        graphics::draw(ctx, &hollow_rect, DrawParam::default())?;
+        mesh.rectangle(stroke, bounds, outer_color);
+        let button = mesh.build(ctx).unwrap();
+
+        graphics::draw(ctx, &button, (dest,))?;
+
+        let text = "Start Game";
+        let location = get_center(self.hitbox);
+        draw_text_centered(ctx, text, font, 20.0, (location, BLACK))?;
 
         Ok(())
     }
@@ -409,6 +417,35 @@ impl EventHandler for GameState {
     }
 }
 
+// Returns a rect such that its center is located (x, y). Assumes that the
+// upper left corner of the Rect is where (x, y) is and that rectangles
+// grow to the right and downwards.
+fn center(x: f32, y: f32, w: f32, h: f32) -> Rect {
+    Rect::new(x - w / 2.0, y - h / 2.0, w, h)
+}
+
+// Returns a point located at the center of the rectangle. Assumes that the
+// upper left corner of the Rect is where (x, y) is and that rectangles
+// grow to the right and downwards.
+fn get_center(rect: Rect) -> mint::Point2<f32> {
+    mint::Point2 {
+        x: rect.x + rect.w / 2.0,
+        y: rect.y + rect.h / 2.0,
+    }
+}
+
+// Returns a rectangle located at (0, 0) with dimensions (w, h)
+fn get_dims(rect: Rect) -> Rect {
+    Rect::new(0.0, 0.0, rect.w, rect.h)
+}
+
+// Return a rectangle the same size as inner, centered inside of outer
+fn center_inside(outer: Rect, inner: Rect) -> Rect {
+    let point = get_center(outer);
+    center(point.x, point.y, inner.w, inner.h)
+}
+
+// Draw some text using the font, scale, and parameters specified.
 fn draw_text<T, S>(
     ctx: &mut Context,
     text: T,
@@ -422,5 +459,36 @@ where
 {
     let mut text = graphics::Text::new(text);
     let text = text.set_font(font, graphics::Scale::uniform(scale));
+    graphics::draw(ctx, text, params)
+}
+
+// Draw some text using the font, scale, and parameters specified.
+// Note that the destination in the `DrawParams` is altered to be the center of
+// the text.
+fn draw_text_centered<T, S>(
+    ctx: &mut Context,
+    text: T,
+    font: graphics::Font,
+    scale: f32,
+    params: S,
+) -> GameResult<()>
+where
+    T: Into<graphics::TextFragment>,
+    S: Into<DrawParam>,
+{
+    let params: DrawParam = params.into();
+
+    // Make the text stuff
+    let mut text = graphics::Text::new(text);
+    let text = text.set_font(font, graphics::Scale::uniform(scale));
+
+    // Find the point such that the text will be centered on `param.dest`
+    let (width, height) = text.dimensions(ctx);
+    let location = mint::Point2 {
+        x: params.dest.x - width as f32 / 2.0,
+        y: params.dest.y - height as f32 / 2.0,
+    };
+    let params = params.dest(location);
+
     graphics::draw(ctx, text, params)
 }

@@ -186,22 +186,18 @@ impl Board {
                     _ => Color::White,
                 };
                 use PieceType::*;
-                let piece = match piece.chars().nth(1).unwrap() {
-                    'P' => Some(Pawn(false)),
-                    'N' => Some(Knight),
-                    'B' => Some(Bishop),
-                    'R' => Some(Rook),
-                    'Q' => Some(Queen),
-                    'K' => Some(King),
-                    _ => None,
-                };
                 let x = j;
                 let y = i + (8 - str_board.len());
-                board.board[y][x] = Tile(piece.map(|piece| Piece {
-                    piece,
-                    color,
-                    has_moved: false,
-                }));
+                let tile = match piece.chars().nth(1).unwrap() {
+                    'P' => Tile::new(color, Pawn(false)),
+                    'N' => Tile::new(color, Knight),
+                    'B' => Tile::new(color, Bishop),
+                    'R' => Tile::new(color, Rook),
+                    'Q' => Tile::new(color, Queen),
+                    'K' => Tile::new(color, King),
+                    _ => Tile::blank(),
+                };
+                board.board[y][x] = tile;
             }
         }
         board

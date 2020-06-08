@@ -1,6 +1,7 @@
 mod board;
 mod screen;
 
+use ggez::conf;
 use ggez::event;
 use ggez::ContextBuilder;
 
@@ -28,7 +29,13 @@ fn main() {
         cb = cb.add_resource_path(path);
     }
     // Make the Context
-    let (mut ctx, mut event_loop) = cb.build().expect("could not create ggez context!");
+    let (mut ctx, mut event_loop) = cb
+        .window_setup(conf::WindowSetup::default().title("chess"))
+        .window_mode(
+            conf::WindowMode::default().dimensions(screen::SCREEN_WIDTH, screen::SCREEN_HEIGHT),
+        )
+        .build()
+        .expect("could not create ggez context!");
     // #[rustfmt::skip]
     // let setup = vec![
     //     ".. .. .. .. .. .. .. ..",
