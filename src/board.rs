@@ -18,12 +18,13 @@ impl BoardState {
     /// Create a board state using the board given. The player-to-move will
     /// initially be white.
     pub fn new(board: Board) -> BoardState {
+        let checkmate = board.checkmate_state(Color::White);
         BoardState {
             board,
             current_player: Color::White,
             dead_black: Vec::new(),
             dead_white: Vec::new(),
-            checkmate: CheckmateState::Normal,
+            checkmate,
         }
     }
 
@@ -53,7 +54,6 @@ impl BoardState {
                 // Clear the old lunge flag before the new one
                 self.board.clear_just_lunged();
                 self.board.lunge(start);
-                println!("Lunged! {:?} {:?}", start, end);
             }
             EnPassant(side) => {
                 self.board
@@ -67,7 +67,6 @@ impl BoardState {
         }
 
         let castling_moves = self.board.castle_locations(self.current_player);
-        println!("castling moves: {:?}", castling_moves);
 
         self.current_player = match self.current_player {
             White => Black,
@@ -75,7 +74,7 @@ impl BoardState {
         };
 
         // Update the checkmate status
-        self.checkmate = self.board.is_checkmate(self.current_player);
+        self.checkmate = self.board.checkmate_state(self.current_player);
 
         Ok(())
     }
@@ -122,6 +121,13 @@ impl BoardState {
         }
 
         list.0
+    }
+
+    pub fn game_over(&self) -> bool {
+        match self.board.checkmate_state(self.current_player) {
+            CheckmateState::Normal | CheckmateState::Check => false,
+            CheckmateState::Checkmate | CheckmateState::Stalemate => true,
+        }
     }
 
     /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
@@ -438,10 +444,6 @@ impl Board {
                 has_moved: _,
             }) if c != player => (),
             _ => {
-                println!(
-                    "Got piece {:?}, {:?}, {:?}",
-                    captured_pawn, direction, captured_pawn_coord
-                );
                 return Err("Captured piece must be a pawn that just lunged of the opposite color");
             }
         }
@@ -519,7 +521,7 @@ impl Board {
     }
 
     /// Returns if the player is currently in checkmate
-    fn is_checkmate(&self, player: Color) -> CheckmateState {
+    fn checkmate_state(&self, player: Color) -> CheckmateState {
         use CheckmateState::*;
         match (self.has_legal_moves(player), self.is_in_check(player)) {
             (false, false) => Stalemate,
@@ -998,7 +1000,7 @@ impl Tile {
 
     /// Returns true if the `Tile` actually has a piece and
     /// `color` matches the color of the piece.
-    fn is_color(&self, color: Color) -> bool {
+    pub fn is_color(&self, color: Color) -> bool {
         match self.0 {
             None => false,
             Some(piece) => piece.color == color,

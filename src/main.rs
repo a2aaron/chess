@@ -53,8 +53,7 @@ fn main() {
     // Usually, you should provide it with the Context object to
     // use when setting your game up.
 
-    let mut game_state = screen::GameState::new(&mut ctx);
-    println!("{}", std::mem::size_of::<board::Tile>());
+    let mut game_state = screen::Game::new(&mut ctx);
     // Run!
     match event::run(&mut ctx, &mut event_loop, &mut game_state) {
         Ok(_) => println!("Exited cleanly."),
