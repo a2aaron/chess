@@ -161,6 +161,12 @@ impl Grid {
     fn upd8(&mut self, ctx: &mut Context) {
         self.main_menu.upd8(ctx);
         self.restart.upd8(ctx);
+
+        if let Some(coord) = self.board.need_promote() {
+            self.board
+                .promote(coord, PieceType::Queen)
+                .expect("Expected OK");
+        }
     }
 
     fn mouse_down_upd8(&mut self, mouse_pos: mint::Point2<f32>) {

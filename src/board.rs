@@ -96,7 +96,7 @@ impl BoardState {
             return Err("No pawn needs to be promoted at this time");
         }
 
-        self.board.checK_promote(coord, piece)?;
+        self.board.check_promote(coord, piece)?;
         self.board.promote_pawn(coord, piece);
 
         use Color::*;
@@ -285,7 +285,7 @@ impl Board {
         if start_piece.color != player {
             return Err("Can't move a piece that isn't yours");
         }
-        let valid_end_spots = get_move_list_ignore_check(self, start).0;
+        let valid_end_spots = get_move_list_full(self, player, start).0;
 
         if valid_end_spots.contains(&end) {
             Ok(())
@@ -614,7 +614,7 @@ impl Board {
     /// - a pawn
     /// - on the last rank of its side
     /// - being promoted to a piece that is not a pawn or a king
-    pub fn checK_promote(&self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
+    pub fn check_promote(&self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
         use PieceType::*;
         let pawn = self.get(coord);
         let color = match coord.1 {
@@ -732,7 +732,8 @@ pub struct MoveList(pub Vec<BoardCoord>);
 
 /// Return a MoveList of the piece located at `coord`.
 /// This function DOES check if a move made by the King would put the King into
-/// check and DOES NOT check if the King can castle.
+/// check and DOES NOT check if the King can castle. It also DOES NOT check if
+/// a pawn needs to be promoted.
 fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
     let list = get_move_list_ignore_check(&board, coord);
     filter_check_causing_moves(&board, player, coord, list)
