@@ -30,10 +30,17 @@ impl BoardState {
 
     /// Attempt to move the piece located at `start` to `end`. This function
     /// returns `Ok()` if the move was successful and `Err` if it was not.
-    /// It also sets `current_player` to the opposite color.
+    /// It also sets `current_player` to the opposite color and handles the
+    /// "just_lunged" pawn flags.
+    /// A pawn needs promotion then this function always fails. You should
+    /// call `promote` on the pawn.
     pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
         use Color::*;
         use MoveType::*;
+        if self.board.pawn_needs_promotion().is_some() {
+            return Err("A pawn needs to be promoted first.");
+        }
+
         match move_type(&self.board, start, end) {
             Castle(color, side) => {
                 self.board.can_castle(color, side)?;
@@ -66,8 +73,33 @@ impl BoardState {
             }
         }
 
-        let castling_moves = self.board.castle_locations(self.current_player);
+        if self.need_promote().is_none() {
+            self.current_player = match self.current_player {
+                White => Black,
+                Black => White,
+            };
+        }
 
+        // Update the checkmate status
+        self.checkmate = self.board.checkmate_state(self.current_player);
+
+        Ok(())
+    }
+
+    pub fn need_promote(&self) -> Option<BoardCoord> {
+        return self.board.pawn_needs_promotion();
+    }
+
+    /// Attempt to promote the pawn.
+    pub fn promote(&mut self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
+        if self.need_promote().is_none() {
+            return Err("No pawn needs to be promoted at this time");
+        }
+
+        self.board.checK_promote(coord, piece)?;
+        self.board.promote_pawn(coord, piece);
+
+        use Color::*;
         self.current_player = match self.current_player {
             White => Black,
             Black => White,
@@ -75,7 +107,6 @@ impl BoardState {
 
         // Update the checkmate status
         self.checkmate = self.board.checkmate_state(self.current_player);
-
         Ok(())
     }
 
@@ -91,6 +122,10 @@ impl BoardState {
     /// This function also DOES check if the King can castle.
     pub fn get_move_list(&self, coord: BoardCoord) -> Vec<BoardCoord> {
         if !on_board(coord) {
+            return vec![];
+        }
+
+        if self.need_promote().is_some() {
             return vec![];
         }
 
@@ -549,6 +584,68 @@ impl Board {
             }
         }
         false
+    }
+
+    /// Returns Some(BoardCoord) if there is a pawn in the last rank that needs
+    /// to be promoted. Otherwise, this functino returns None.
+    pub fn pawn_needs_promotion(&self) -> Option<BoardCoord> {
+        for i in 0..7 {
+            let black_coord = BoardCoord(i, 0);
+            if self
+                .get(black_coord)
+                .is(Color::Black, PieceType::Pawn(false))
+            {
+                return Some(black_coord);
+            }
+
+            let white_coord = BoardCoord(i, 7);
+            if self
+                .get(white_coord)
+                .is(Color::White, PieceType::Pawn(false))
+            {
+                return Some(white_coord);
+            }
+        }
+        None
+    }
+
+    /// Checks if the Tile at coord can be promoted to piece.
+    /// A pawn may be promoted if it is
+    /// - a pawn
+    /// - on the last rank of its side
+    /// - being promoted to a piece that is not a pawn or a king
+    pub fn checK_promote(&self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
+        use PieceType::*;
+        let pawn = self.get(coord);
+        let color = match coord.1 {
+            0 => Color::Black,
+            7 => Color::White,
+            _ => {
+                return Err("Can only promote a pawn at the last rank of the board");
+            }
+        };
+
+        if !pawn.is(color, Pawn(false)) {
+            return Err("Can only promote a pawn of opposite color at this position.");
+        }
+
+        match piece {
+            Pawn(_) => Err("Can not promote to a pawn"),
+            King => Err("Can not promote to a king"),
+            _ => Ok(()),
+        }
+    }
+
+    // Promote the pawn located at coord to the piece of PieceType
+    // Note that this function does not actually check if the promotion would be
+    // valid.
+    pub fn promote_pawn(&mut self, coord: BoardCoord, piece: PieceType) {
+        let tile = self.get_mut(coord);
+        *tile = Tile(Some(Piece {
+            color: tile.0.unwrap().color,
+            piece,
+            has_moved: true,
+        }));
     }
 
     /// Gets the piece located at the coordinates

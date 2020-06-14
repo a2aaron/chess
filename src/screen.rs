@@ -128,13 +128,13 @@ impl Grid {
     fn new(ctx: &mut Context) -> Grid {
         let board = vec![
             ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. WP ..",
             ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. BK ..",
             ".. .. .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. BQ .. .. ..",
-            "WK .. WR .. BQ .. .. ..",
-            ".. .. .. .. BQ .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "BP .. .. .. .. .. .. ..",
+            ".. .. .. .. .. WK .. BK",
         ];
         let board = Board::from_string_vec(board);
         // let board = Board::default();
@@ -181,6 +181,7 @@ impl Grid {
         self.move_piece(mouse_pos);
         self.dragging = None;
         self.drop_locations = vec![];
+
         if self.board.game_over() {
             if self.restart.pressed(mouse_pos) {
                 self.new_game();
@@ -200,7 +201,9 @@ impl Grid {
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         graphics::draw(ctx, &self.background_mesh, (na::Point2::from(self.offset),))?;
-        self.draw_highlights(ctx)?;
+        if !self.board.game_over() {
+            self.draw_highlights(ctx)?;
+        }
         // Draw pieces
         for i in 0..8 {
             for j in 0..8 {
@@ -235,6 +238,13 @@ impl Grid {
         };
         let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 50.0);
         draw_text(ctx, text, font, 40.0, (location, RED))?;
+
+        if let Some(coord) = self.board.need_promote() {
+            let text = format!("Pawn at {:?} needs promotion!", coord);
+            let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 400.0);
+            draw_text(ctx, text, font, 40.0, (location, RED))?;
+        }
+
         Ok(())
     }
 
