@@ -1,5 +1,8 @@
 use std::fmt;
 
+const ROWS: std::ops::Range<i8> = 0..8;
+const COLS: std::ops::Range<i8> = 0..8;
+
 // use ggez::Context;
 /// The overall board state, which keeps track of the various things each player
 /// can do, such as if they can castle, or what pieces are currently dead.
@@ -141,9 +144,7 @@ impl BoardState {
             return vec![];
         }
 
-        let list = get_move_list_ignore_check(&self.board, coord);
-
-        let mut list = filter_check_causing_moves(&self.board, self.current_player, coord, list);
+        let mut list = get_move_list_full(&self.board, self.current_player, coord);
         match piece.piece {
             PieceType::King => {
                 list.0
@@ -499,6 +500,8 @@ impl Board {
         self.set(captured_pawn, Tile::blank());
     }
 
+    /// Return a list of locations a pawn can move to using enpassant.
+    /// (really this always just returns one element or no elements)
     fn enpassant_locations(&self, player: Color, capturing_pawn: BoardCoord) -> Vec<BoardCoord> {
         let mut locations = vec![];
         if self
@@ -523,8 +526,8 @@ impl Board {
     }
 
     fn clear_just_lunged(&mut self) {
-        for i in 0..8 {
-            for j in 0..8 {
+        for i in ROWS {
+            for j in COLS {
                 self.get_mut(BoardCoord(j, i)).set_just_lunged(false);
             }
         }
@@ -533,8 +536,10 @@ impl Board {
     /// Returns true if no piece of the opposite color threatens the square.
     fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
         // TODO: this is hilariously inefficient
-        for i in 0..8 {
-            for j in 0..8 {
+        // Iterate over all of opposite `color`'s pieces, seeing if that
+        // piece can attack the space.
+        for i in ROWS {
+            for j in COLS {
                 let coord = BoardCoord::new((j, i)).unwrap();
                 let tile = self.get(coord);
                 if tile.0.is_none() {
@@ -542,6 +547,12 @@ impl Board {
                 }
                 let piece = tile.0.unwrap();
                 if piece.color != color {
+                    // Ignore check here. This is because a piece still threatens
+                    // a square even if that move would put the king into check
+                    // (ex: white can still threaten the black king, even if actually
+                    // making the move would put the white king into check, because
+                    // "in universe" the move that would kill BK happens before the
+                    // the move that would kill WK)
                     let move_list = get_move_list_ignore_check(self, coord);
                     if move_list.0.contains(&check_coord) {
                         return false;
@@ -572,8 +583,8 @@ impl Board {
 
     fn has_legal_moves(&self, player: Color) -> bool {
         // TODO: this is also HILARIOUSLY INEFFICENT
-        for i in 0..8 {
-            for j in 0..8 {
+        for i in ROWS {
+            for j in COLS {
                 let coord = BoardCoord(j, i);
                 let tile = self.get(coord);
                 if tile.is_color(player) {
@@ -589,7 +600,7 @@ impl Board {
     /// Returns Some(BoardCoord) if there is a pawn in the last rank that needs
     /// to be promoted. Otherwise, this functino returns None.
     pub fn pawn_needs_promotion(&self) -> Option<BoardCoord> {
-        for i in 0..7 {
+        for i in ROWS {
             let black_coord = BoardCoord(i, 0);
             if self
                 .get(black_coord)
@@ -669,8 +680,8 @@ impl Board {
     /// Attempts to return the coordinates the king of the specified color
     /// TODO: MAKE MORE EFFICENT?
     pub fn get_king(&self, color: Color) -> Option<BoardCoord> {
-        for i in 0..8 {
-            for j in 0..8 {
+        for i in ROWS {
+            for j in COLS {
                 let coord = BoardCoord::new((j, 7 - i)).unwrap();
                 let tile = self.get(coord);
                 if tile.is(color, PieceType::King) {
@@ -685,8 +696,8 @@ impl Board {
     /// piece match. This vector is empty if there are no pieces that match.
     fn get_pieces(&self, color: Color, piece: PieceType) -> Vec<BoardCoord> {
         let mut list = vec![];
-        for i in 0..8 {
-            for j in 0..8 {
+        for i in ROWS {
+            for j in COLS {
                 let coord = BoardCoord::new((j, 7 - i)).unwrap();
                 let tile = self.get(coord);
                 if tile.is(color, piece) {
@@ -736,18 +747,6 @@ pub struct MoveList(pub Vec<BoardCoord>);
 /// a pawn needs to be promoted.
 fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
     let list = get_move_list_ignore_check(&board, coord);
-    filter_check_causing_moves(&board, player, coord, list)
-}
-
-/// This function attempts to move the piece at `coord` to each destination
-/// in `move_list`, and removes the move if it would cause the King of `color`
-/// to be in check.
-fn filter_check_causing_moves(
-    board: &Board,
-    color: Color,
-    coord: BoardCoord,
-    move_list: MoveList,
-) -> MoveList {
     // for each attempted move, see if moving there would
     // actually put the king in check. we need to actually move the
     // piece there because we want to avoid the chance that the
@@ -761,11 +760,11 @@ fn filter_check_causing_moves(
     // blocks LoS), but it would be attacked if WK actually did move
     // there.
     let mut filtered_list = vec![];
-    for attempted_move in move_list.0 {
+    for attempted_move in list.0 {
         let mut moved_board = board.clone();
         moved_board.move_piece(coord, attempted_move);
-        let king_coord = moved_board.get_king(color).unwrap();
-        if moved_board.is_square_safe(color, &king_coord) {
+        let king_coord = moved_board.get_king(player).unwrap();
+        if moved_board.is_square_safe(player, &king_coord) {
             filtered_list.push(attempted_move);
         }
     }
@@ -981,8 +980,8 @@ pub fn on_board_i8(pos: (i8, i8)) -> bool {
 
 impl fmt::Display for MoveList {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for i in 0..8 {
-            for j in 0..8 {
+        for i in ROWS {
+            for j in COLS {
                 let coord = BoardCoord(j, 7 - i);
                 if self.0.contains(&coord) {
                     write!(f, "## ")?;

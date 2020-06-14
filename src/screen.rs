@@ -19,6 +19,7 @@ const DARK_GREY: graphics::Color = graphics::Color::new(0.25, 0.25, 0.25, 1.0);
 const BLACK: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
 const TRANSPARENT: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 0.0);
 
+#[derive(Debug)]
 pub struct Game {
     screen: ScreenState,
     title_screen: TitleScreen,
@@ -26,6 +27,7 @@ pub struct Game {
     font: graphics::Font,
     last_mouse_down_pos: Option<mint::Point2<f32>>, // Some(Point2<f32>) if mouse is pressed, else None
     last_mouse_up_pos: Option<mint::Point2<f32>>,
+    last_screen_state: ScreenState, // used to detect state transitions
 }
 
 impl Game {
@@ -37,17 +39,27 @@ impl Game {
             font: graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap(),
             last_mouse_down_pos: None,
             last_mouse_up_pos: None,
+            last_screen_state: ScreenState::TitleScreen,
         }
     }
 }
 
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
+        // ScreenState transitions
+        // todo: this seems silly
+        match (self.last_screen_state, self.screen) {
+            (ScreenState::TitleScreen, ScreenState::InGame) => self.grid.new_game(),
+            _ => (),
+        }
+
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.upd8(ctx),
             ScreenState::InGame => self.grid.upd8(ctx),
             ScreenState::Quit => ggez::event::quit(ctx),
         }
+
+        self.last_screen_state = self.screen;
         Ok(())
     }
 
@@ -122,30 +134,24 @@ pub struct Grid {
     background_mesh: graphics::Mesh,
     restart: Button,
     main_menu: Button,
+    queen_button: Button, // todo: this is probably dumb, use a vector later on
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+enum UIState {
+    Normal,
+    Promote(BoardCoord),
+    GameOver,
 }
 
 impl Grid {
     fn new(ctx: &mut Context) -> Grid {
-        let board = vec![
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. WP ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            "BP .. .. .. .. .. .. ..",
-            ".. .. .. .. .. WK .. BK",
-        ];
-        let board = Board::from_string_vec(board);
-        // let board = Board::default();
-        let board = BoardState::new(board);
-
         Grid {
             square_size: 70.0,
             offset: na::Vector2::new(10.0, 10.0),
             dragging: None,
             drop_locations: vec![],
-            board: board,
+            board: BoardState::new(Board::default()),
             background_mesh: Grid::background_mesh(ctx, 70.0),
             restart: Button::new(
                 center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT / 2.0 - 40.0, 100.0, 35.0),
@@ -155,17 +161,42 @@ impl Grid {
                 center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT / 2.0 + 40.0, 100.0, 35.0),
                 "Main Menu",
             ),
+            queen_button: Button::new(
+                center(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT - 40.0, 40.0, 35.0),
+                "♛",
+            ),
         }
     }
 
-    fn upd8(&mut self, ctx: &mut Context) {
-        self.main_menu.upd8(ctx);
-        self.restart.upd8(ctx);
+    fn new_game(&mut self) {
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            "WP .. WP .. .. BK WP ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. BR .. BR .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. BP WK .. BP .. BP",
+            ".. .. .. .. .. .. .. ..",
+        ];
+        let board = Board::from_string_vec(board);
+        // let board = Board::default();
+        self.board = BoardState::new(board);
+        self.dragging = None;
+        self.drop_locations = vec![];
+    }
 
-        if let Some(coord) = self.board.need_promote() {
-            self.board
-                .promote(coord, PieceType::Queen)
-                .expect("Expected OK");
+    fn upd8(&mut self, ctx: &mut Context) {
+        use UIState::*;
+        match self.ui_state() {
+            Normal => (),
+            GameOver => {
+                self.main_menu.upd8(ctx);
+                self.restart.upd8(ctx);
+            }
+            Promote(_) => {
+                self.queen_button.upd8(ctx);
+            }
         }
     }
 
@@ -184,56 +215,48 @@ impl Grid {
     }
 
     fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
-        self.move_piece(mouse_pos);
-        self.dragging = None;
-        self.drop_locations = vec![];
+        use UIState::*;
+        match self.ui_state() {
+            Normal => self.move_piece(mouse_pos),
+            GameOver => {
+                if self.restart.pressed(mouse_pos) {
+                    self.new_game();
+                }
 
-        if self.board.game_over() {
-            if self.restart.pressed(mouse_pos) {
-                self.new_game();
+                if self.main_menu.pressed(mouse_pos) {
+                    *screen_state = ScreenState::TitleScreen;
+                }
             }
-
-            if self.main_menu.pressed(mouse_pos) {
-                *screen_state = ScreenState::TitleScreen;
+            Promote(coord) => {
+                if self.queen_button.pressed(mouse_pos) {
+                    self.board
+                        .promote(coord, PieceType::Queen)
+                        .expect("Expected promotion to queen to work")
+                }
             }
         }
-    }
-
-    fn new_game(&mut self) {
-        self.board = BoardState::new(Board::default());
         self.dragging = None;
         self.drop_locations = vec![];
     }
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         graphics::draw(ctx, &self.background_mesh, (na::Point2::from(self.offset),))?;
-        if !self.board.game_over() {
+        if self.ui_state() == UIState::Normal {
             self.draw_highlights(ctx)?;
         }
-        // Draw pieces
-        for i in 0..8 {
-            for j in 0..8 {
-                let x = j;
-                let y = 7 - i;
-                let coord = BoardCoord::new((x, y)).unwrap();
-                let tile = self.board.get(coord);
-                let mut text = graphics::Text::new(tile.as_str());
-                let text = text.set_font(font, graphics::Scale::uniform(50.0));
-                let location = self.to_screen_coord(BoardCoord(x, y))
-                    + na::Vector2::new(self.square_size * 0.42, self.square_size * 0.25);
-                let color = match tile.0 {
-                    None => TRANSPARENT,
-                    Some(piece) => match piece.color {
-                        Color::Black => BLACK,
-                        Color::White => WHITE,
-                    },
-                };
-                graphics::draw(ctx, text, (location, color))?;
-            }
-        }
 
-        if self.board.game_over() {
-            self.draw_game_over(ctx, font)?;
+        self.draw_pieces(ctx, font)?;
+
+        // Draw UI buttons, if applicable
+        use UIState::*;
+        match self.ui_state() {
+            Normal => (),
+            GameOver => {
+                self.draw_game_over(ctx, font)?;
+            }
+            Promote(_) => {
+                self.queen_button.draw(ctx, font)?;
+            }
         }
 
         // TODO: It is probably better to store this as a text mesh? Maybe pregenerate
@@ -266,6 +289,30 @@ impl Grid {
             "{:?}",
             self.board.take_turn(self.dragging.unwrap(), drop_loc)
         );
+    }
+
+    fn draw_pieces(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+        for i in 0..8 {
+            for j in 0..8 {
+                let x = j;
+                let y = 7 - i;
+                let coord = BoardCoord::new((x, y)).unwrap();
+                let tile = self.board.get(coord);
+                let mut text = graphics::Text::new(tile.as_str());
+                let text = text.set_font(font, graphics::Scale::uniform(50.0));
+                let location = self.to_screen_coord(BoardCoord(x, y))
+                    + na::Vector2::new(self.square_size * 0.42, self.square_size * 0.25);
+                let color = match tile.0 {
+                    None => TRANSPARENT,
+                    Some(piece) => match piece.color {
+                        Color::Black => BLACK,
+                        Color::White => WHITE,
+                    },
+                };
+                graphics::draw(ctx, text, (location, color))?;
+            }
+        }
+        Ok(())
     }
 
     fn draw_highlights(&self, ctx: &mut Context) -> GameResult<()> {
@@ -378,6 +425,14 @@ impl Grid {
         mesh.build(ctx).unwrap()
     }
 
+    fn ui_state(&self) -> UIState {
+        match (self.board.game_over(), self.board.need_promote()) {
+            (false, None) => UIState::Normal,
+            (false, Some(coord)) => UIState::Promote(coord),
+            (true, _) => UIState::GameOver,
+        }
+    }
+
     /// Returns a tuple of where the given screen space coordinates would end up
     /// on the grid. This function returns Err if the point would be off the grid.
     fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
@@ -475,6 +530,7 @@ impl Button {
     }
 }
 
+#[derive(Debug)]
 pub struct TitleScreen {
     start_game: Button,
     quit_game: Button,
@@ -524,6 +580,7 @@ impl TitleScreen {
     }
 }
 
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ScreenState {
     TitleScreen,
     InGame,
