@@ -108,7 +108,7 @@ impl EventHandler for Game {
         }
     }
 
-    fn mouse_button_up_event(&mut self, _ctx: &mut Context, button: MouseButton, x: f32, y: f32) {
+    fn mouse_button_up_event(&mut self, _ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
         self.last_mouse_down_pos = None;
         self.last_mouse_up_pos = Some(mint::Point2 { x, y });
 
@@ -135,8 +135,10 @@ pub struct Grid {
     restart: Button,
     main_menu: Button,
     queen_button: Button, // todo: this is probably dumb, use a vector later on
+    rook_button: Button,
+    bishop_button: Button,
+    knight_button: Button,
 }
-
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 enum UIState {
     Normal,
@@ -154,16 +156,38 @@ impl Grid {
             board: BoardState::new(Board::default()),
             background_mesh: Grid::background_mesh(ctx, 70.0),
             restart: Button::new(
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT / 2.0 - 40.0, 100.0, 35.0),
+                Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT / 2.0 - 40.0, 100.0, 35.0),
                 "Restart Game",
             ),
             main_menu: Button::new(
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT / 2.0 + 40.0, 100.0, 35.0),
+                Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT / 2.0 + 40.0, 100.0, 35.0),
                 "Main Menu",
             ),
             queen_button: Button::new(
-                center(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT - 40.0, 40.0, 35.0),
-                "♛",
+                Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT - 40.0, 40.0, 35.0),
+                QUEEN_STR,
+            ),
+            rook_button: Button::new(
+                Rect::new(SCREEN_WIDTH * 0.75 + 40.0, SCREEN_HEIGHT - 40.0, 40.0, 35.0),
+                ROOK_STR,
+            ),
+            bishop_button: Button::new(
+                Rect::new(
+                    SCREEN_WIDTH * 0.75 + 40.0 * 2.0,
+                    SCREEN_HEIGHT - 40.0,
+                    40.0,
+                    35.0,
+                ),
+                BISHOP_STR,
+            ),
+            knight_button: Button::new(
+                Rect::new(
+                    SCREEN_WIDTH * 0.75 + 40.0 * 3.0,
+                    SCREEN_HEIGHT - 40.0,
+                    40.0,
+                    35.0,
+                ),
+                KNIGHT_STR,
             ),
         }
     }
@@ -171,12 +195,12 @@ impl Grid {
     fn new_game(&mut self) {
         let board = vec![
             ".. .. .. .. .. .. .. ..",
-            "WP .. WP .. .. BK WP ..",
+            "WP .. .. .. .. BK .. ..",
+            ".. WP .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
-            ".. .. BR .. BR .. .. ..",
             ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. BP WK .. BP .. BP",
+            "BP .. .. .. .. .. .. ..",
+            ".. BP .. .. .. .. .. WK",
             ".. .. .. .. .. .. .. ..",
         ];
         let board = Board::from_string_vec(board);
@@ -196,6 +220,9 @@ impl Grid {
             }
             Promote(_) => {
                 self.queen_button.upd8(ctx);
+                self.rook_button.upd8(ctx);
+                self.bishop_button.upd8(ctx);
+                self.knight_button.upd8(ctx);
             }
         }
     }
@@ -231,7 +258,22 @@ impl Grid {
                 if self.queen_button.pressed(mouse_pos) {
                     self.board
                         .promote(coord, PieceType::Queen)
-                        .expect("Expected promotion to queen to work")
+                        .expect("Expected promotion to work");
+                }
+                if self.rook_button.pressed(mouse_pos) {
+                    self.board
+                        .promote(coord, PieceType::Rook)
+                        .expect("Expected promotion to work");
+                }
+                if self.bishop_button.pressed(mouse_pos) {
+                    self.board
+                        .promote(coord, PieceType::Bishop)
+                        .expect("Expected promotion to work");
+                }
+                if self.knight_button.pressed(mouse_pos) {
+                    self.board
+                        .promote(coord, PieceType::Knight)
+                        .expect("Expected promotion to work");
                 }
             }
         }
@@ -256,6 +298,9 @@ impl Grid {
             }
             Promote(_) => {
                 self.queen_button.draw(ctx, font)?;
+                self.rook_button.draw(ctx, font)?;
+                self.bishop_button.draw(ctx, font)?;
+                self.knight_button.draw(ctx, font)?;
             }
         }
 
@@ -271,7 +316,7 @@ impl Grid {
         if let Some(coord) = self.board.need_promote() {
             let text = format!("Pawn at {:?} needs promotion!", coord);
             let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 400.0);
-            draw_text(ctx, text, font, 40.0, (location, RED))?;
+            draw_text(ctx, text, font, 20.0, (location, RED))?;
         }
 
         Ok(())

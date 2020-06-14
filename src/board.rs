@@ -2,6 +2,12 @@ use std::fmt;
 
 const ROWS: std::ops::Range<i8> = 0..8;
 const COLS: std::ops::Range<i8> = 0..8;
+pub const PAWN_STR: &str = "♟";
+pub const KNIGHT_STR: &str = "♞";
+pub const BISHOP_STR: &str = "♝";
+pub const ROOK_STR: &str = "♜";
+pub const QUEEN_STR: &str = "♛";
+pub const KING_STR: &str = "♚";
 
 // use ggez::Context;
 /// The overall board state, which keeps track of the various things each player
@@ -447,10 +453,6 @@ impl Board {
     ) -> Result<(), &'static str> {
         use BoardSide::*;
         use Color::*;
-        let fifth_rank = match player {
-            White => 4,
-            Black => 2,
-        };
         // We expect that start and end are diagonal from each other
         // and that the captured pawn is "one rank behind" the the end location
         // where "behind" is relative to the player capturing.
@@ -690,22 +692,6 @@ impl Board {
             }
         }
         None
-    }
-
-    /// Returns a vector of all of coordinates of the pieces whose color and
-    /// piece match. This vector is empty if there are no pieces that match.
-    fn get_pieces(&self, color: Color, piece: PieceType) -> Vec<BoardCoord> {
-        let mut list = vec![];
-        for i in ROWS {
-            for j in COLS {
-                let coord = BoardCoord::new((j, 7 - i)).unwrap();
-                let tile = self.get(coord);
-                if tile.is(color, piece) {
-                    list.push(coord);
-                }
-            }
-        }
-        list
     }
 }
 
@@ -1083,7 +1069,11 @@ impl Tile {
     pub fn is(&self, color: Color, piece_type: PieceType) -> bool {
         match self.0 {
             None => false,
-            Some(piece) => piece.color == color && piece.piece == piece_type,
+            Some(piece) => {
+                // use std::mem:discriminant here because we don't care if PieceType::Pawn is just lunged or not
+                piece.color == color
+                    && std::mem::discriminant(&piece.piece) == std::mem::discriminant(&piece_type)
+            }
         }
     }
 
@@ -1110,7 +1100,9 @@ impl Tile {
     fn is_type(&self, piece_type: PieceType) -> bool {
         match self.0 {
             None => false,
-            Some(piece) => piece.piece == piece_type,
+            Some(piece) => {
+                std::mem::discriminant(&piece.piece) == std::mem::discriminant(&piece_type)
+            }
         }
     }
 
@@ -1121,12 +1113,12 @@ impl Tile {
         match self.0 {
             None => "",
             Some(piece) => match piece.piece {
-                Pawn(_) => "♟",
-                Knight => "♞",
-                Bishop => "♝",
-                Rook => "♜",
-                Queen => "♛",
-                King => "♚",
+                Pawn(_) => PAWN_STR,
+                Knight => KNIGHT_STR,
+                Bishop => BISHOP_STR,
+                Rook => ROOK_STR,
+                Queen => QUEEN_STR,
+                King => KING_STR,
             },
         }
     }
