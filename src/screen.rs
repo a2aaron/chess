@@ -25,9 +25,27 @@ pub struct Game {
     title_screen: TitleScreen,
     grid: Grid,
     font: graphics::Font,
-    last_mouse_down_pos: Option<mint::Point2<f32>>, // Some(Point2<f32>) if mouse is pressed, else None
-    last_mouse_up_pos: Option<mint::Point2<f32>>,
     last_screen_state: ScreenState, // used to detect state transitions
+    mouse_state: MouseState,
+}
+
+#[derive(Debug)]
+pub struct MouseState {
+    last_down: Option<mint::Point2<f32>>, // The position of the last mouse down, if it exists
+    last_up: Option<mint::Point2<f32>>,   // The position of the last mouse up, if it exists
+    dragging: Option<mint::Point2<f32>>,  // Some(coord) if the mouse is pressed, else None
+    pos: mint::Point2<f32>,
+}
+
+impl MouseState {
+    fn new(ctx: &mut Context) -> MouseState {
+        MouseState {
+            last_down: None,
+            last_up: None,
+            dragging: None,
+            pos: ggez::input::mouse::position(ctx),
+        }
+    }
 }
 
 impl Game {
@@ -37,8 +55,7 @@ impl Game {
             title_screen: TitleScreen::new(),
             grid: Grid::new(ctx),
             font: graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap(),
-            last_mouse_down_pos: None,
-            last_mouse_up_pos: None,
+            mouse_state: MouseState::new(ctx),
             last_screen_state: ScreenState::TitleScreen,
         }
     }
@@ -60,6 +77,11 @@ impl EventHandler for Game {
         }
 
         self.last_screen_state = self.screen;
+
+        self.mouse_state.pos = ggez::input::mouse::position(ctx);
+
+        println!("{:?}", self.mouse_state);
+
         Ok(())
     }
 
@@ -73,15 +95,13 @@ impl EventHandler for Game {
             2.0,
             graphics::WHITE,
         )?;
-        let pos = input::mouse::position(ctx);
-        let (mousex, mousey) = (pos.x, pos.y);
 
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.font)?,
-            ScreenState::InGame => self.grid.draw(ctx, self.font)?,
+            ScreenState::InGame => self.grid.draw(ctx, &self.mouse_state, self.font)?,
             ScreenState::Quit => (),
         }
-        graphics::draw(ctx, &circle, (na::Point2::new(mousex, mousey),))?;
+        graphics::draw(ctx, &circle, (self.mouse_state.pos,))?;
 
         // FPS counter
         let text = format!("{}", ggez::timer::fps(ctx));
@@ -99,8 +119,11 @@ impl EventHandler for Game {
         y: f32,
     ) {
         let pos = mint::Point2 { x, y };
-        self.last_mouse_down_pos = Some(pos);
-        self.last_mouse_up_pos = None;
+
+        // self.mouse_state.last_up = None;
+        self.mouse_state.last_down = Some(pos);
+        self.mouse_state.dragging = Some(pos);
+
         match self.screen {
             ScreenState::TitleScreen => (),
             ScreenState::InGame => self.grid.mouse_down_upd8(pos),
@@ -108,17 +131,19 @@ impl EventHandler for Game {
         }
     }
 
-    fn mouse_button_up_event(&mut self, _ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
-        self.last_mouse_down_pos = None;
-        self.last_mouse_up_pos = Some(mint::Point2 { x, y });
+    fn mouse_button_up_event(&mut self, ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
+        // self.mouse_state.last_down = None;
+        self.mouse_state.last_up = Some(mint::Point2 { x, y });
+        self.mouse_state.dragging = None;
 
         match self.screen {
             ScreenState::TitleScreen => self
                 .title_screen
                 .mouse_up_upd8(mint::Point2 { x, y }, &mut self.screen),
-            ScreenState::InGame => self
-                .grid
-                .mouse_up_upd8(mint::Point2 { x, y }, &mut self.screen),
+            ScreenState::InGame => {
+                self.grid
+                    .mouse_up_upd8(ctx, &self.mouse_state, &mut self.screen)
+            }
             ScreenState::Quit => (),
         }
     }
@@ -128,7 +153,6 @@ impl EventHandler for Game {
 pub struct Grid {
     square_size: f32,
     offset: na::Vector2<f32>,
-    dragging: Option<BoardCoord>,
     drop_locations: Vec<BoardCoord>,
     board: BoardState,
     background_mesh: graphics::Mesh,
@@ -151,7 +175,6 @@ impl Grid {
         Grid {
             square_size: 70.0,
             offset: na::Vector2::new(10.0, 10.0),
-            dragging: None,
             drop_locations: vec![],
             board: BoardState::new(Board::default()),
             background_mesh: Grid::background_mesh(ctx, 70.0),
@@ -206,7 +229,6 @@ impl Grid {
         let board = Board::from_string_vec(board);
         // let board = Board::default();
         self.board = BoardState::new(board);
-        self.dragging = None;
         self.drop_locations = vec![];
     }
 
@@ -231,60 +253,62 @@ impl Grid {
         let coord = self.to_grid_coord(mouse_pos);
         match coord {
             Err(_) => {
-                self.dragging = None;
                 self.drop_locations = vec![];
             }
             Ok(coord) => {
-                self.dragging = Some(coord);
                 self.drop_locations = self.board.get_move_list(coord);
             }
         };
     }
 
-    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
+    fn mouse_up_upd8(
+        &mut self,
+        ctx: &mut Context,
+        mouse: &MouseState,
+        screen_state: &mut ScreenState,
+    ) {
         use UIState::*;
         match self.ui_state() {
-            Normal => self.move_piece(mouse_pos),
+            Normal => self.move_piece(ctx, mouse),
             GameOver => {
-                if self.restart.pressed(mouse_pos) {
+                if self.restart.pressed(mouse.pos) {
                     self.new_game();
                 }
 
-                if self.main_menu.pressed(mouse_pos) {
+                if self.main_menu.pressed(mouse.pos) {
                     *screen_state = ScreenState::TitleScreen;
                 }
             }
             Promote(coord) => {
-                if self.queen_button.pressed(mouse_pos) {
+                if self.queen_button.pressed(mouse.pos) {
                     self.board
                         .promote(coord, PieceType::Queen)
                         .expect("Expected promotion to work");
                 }
-                if self.rook_button.pressed(mouse_pos) {
+                if self.rook_button.pressed(mouse.pos) {
                     self.board
                         .promote(coord, PieceType::Rook)
                         .expect("Expected promotion to work");
                 }
-                if self.bishop_button.pressed(mouse_pos) {
+                if self.bishop_button.pressed(mouse.pos) {
                     self.board
                         .promote(coord, PieceType::Bishop)
                         .expect("Expected promotion to work");
                 }
-                if self.knight_button.pressed(mouse_pos) {
+                if self.knight_button.pressed(mouse.pos) {
                     self.board
                         .promote(coord, PieceType::Knight)
                         .expect("Expected promotion to work");
                 }
             }
         }
-        self.dragging = None;
         self.drop_locations = vec![];
     }
 
-    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context, mouse: &MouseState, font: graphics::Font) -> GameResult<()> {
         graphics::draw(ctx, &self.background_mesh, (na::Point2::from(self.offset),))?;
         if self.ui_state() == UIState::Normal {
-            self.draw_highlights(ctx)?;
+            self.draw_highlights(ctx, mouse)?;
         }
 
         self.draw_pieces(ctx, font)?;
@@ -322,18 +346,18 @@ impl Grid {
         Ok(())
     }
 
-    /// Move a piece at the location of the last mouse down press to where the
-    /// mouse currently is.
-    fn move_piece(&mut self, mouse_pos: mint::Point2<f32>) {
-        let drop_loc = self.to_grid_coord(mouse_pos);
-        if drop_loc.is_err() {
+    /// Call on mouse up
+    /// Try to move the piece at the location of the last mouse down press to where the
+    /// mouse currently is. A drag isn't being done, this function does nothing.
+    fn move_piece(&mut self, ctx: &mut Context, mouse: &MouseState) {
+        let dragging = self.to_grid_coord(mouse.last_down.unwrap());
+        let drop_loc = self.to_grid_coord(mouse.pos);
+        if drop_loc.is_err() || dragging.is_err() {
             return;
         }
         let drop_loc = drop_loc.unwrap();
-        println!(
-            "{:?}",
-            self.board.take_turn(self.dragging.unwrap(), drop_loc)
-        );
+        let dragging = dragging.unwrap();
+        println!("{:?}", self.board.take_turn(dragging, drop_loc));
     }
 
     fn draw_pieces(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
@@ -360,7 +384,7 @@ impl Grid {
         Ok(())
     }
 
-    fn draw_highlights(&self, ctx: &mut Context) -> GameResult<()> {
+    fn draw_highlights(&self, ctx: &mut Context, mouse: &MouseState) -> GameResult<()> {
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
 
         let mut mesh = graphics::MeshBuilder::new();
@@ -393,19 +417,18 @@ impl Grid {
         mesh.rectangle(stroke, hollow_rect, WHITE);
         let hollow_rect = mesh.build(ctx).unwrap();
 
-        // Mouse Highlight Stuff
-        let mouse = input::mouse::position(ctx);
-        let mouse = self.to_grid_coord(mouse).ok();
+        // Color the potential locations the piece may be moved to in blue
         for coord in &self.drop_locations {
             let offset: na::Point2<f32> = self.to_screen_coord(*coord) + self.offset;
             graphics::draw(ctx, &hollow_rect, (offset, BLUE))?;
         }
 
-        // Color the currently highlighted square red if it is the player's piece
-        if let Some(coord) = mouse {
+        // Color the currently highlighted square red if it is the player's piece or if the player is dragging it
+        let pos = self.to_grid_coord(mouse.pos).ok();
+        if let Some(coord) = pos {
             let same_color = self.board.get(coord).is_color(self.board.current_player);
-            let dragging = self.dragging.is_some();
-            let color = if same_color || dragging {
+            let is_dragging = mouse.dragging.is_some();
+            let color = if same_color || is_dragging {
                 RED
             } else {
                 TRANSPARENT
@@ -415,9 +438,12 @@ impl Grid {
         }
 
         // Color the dragged square green
-        if let Some(coord) = self.dragging {
-            let offset: na::Point2<f32> = self.to_screen_coord(coord) + self.offset;
-            graphics::draw(ctx, &hollow_rect, (offset, GREEN))?;
+        if let Some(dragging) = mouse.dragging {
+            let dragging = self.to_grid_coord(dragging);
+            if let Ok(coord) = dragging {
+                let offset: na::Point2<f32> = self.to_screen_coord(coord) + self.offset;
+                graphics::draw(ctx, &hollow_rect, (offset, GREEN))?;
+            }
         }
 
         Ok(())
