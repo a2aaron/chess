@@ -1,7 +1,7 @@
 use crate::board::*;
 
 use ggez::event::{EventHandler, MouseButton};
-use ggez::graphics::{self, DrawParam, Rect};
+use ggez::graphics::{self, DrawParam, Rect, Text};
 use ggez::input;
 use ggez::mint;
 use ggez::nalgebra as na;
@@ -9,6 +9,9 @@ use ggez::{Context, GameResult};
 
 pub const SCREEN_WIDTH: f32 = 800.0;
 pub const SCREEN_HEIGHT: f32 = 600.0;
+
+const DEFAULT_SCALE: f32 = 20.0;
+const DONTCARE: f32 = -999.0;
 
 const RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 1.0);
 const GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 1.0);
@@ -18,15 +21,33 @@ const LIGHT_GREY: graphics::Color = graphics::Color::new(0.5, 0.5, 0.5, 1.0);
 const DARK_GREY: graphics::Color = graphics::Color::new(0.25, 0.25, 0.25, 1.0);
 const BLACK: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
 const TRANSPARENT: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 0.0);
+const TRANS_RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 0.5);
+const TRANS_BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 0.5);
 
 #[derive(Debug)]
 pub struct Game {
     screen: ScreenState,
     title_screen: TitleScreen,
     grid: Grid,
-    font: graphics::Font,
     last_screen_state: ScreenState, // used to detect state transitions
+    ext_ctx: ExtendedContext,
+}
+
+#[derive(Debug)]
+pub struct ExtendedContext {
     mouse_state: MouseState,
+    font: graphics::Font,
+    debug_render: Vec<(Rect, graphics::Color)>, // the debug rectangles. Rendered in red on top of everything else.
+}
+
+impl ExtendedContext {
+    fn new(ctx: &mut Context, font: graphics::Font) -> ExtendedContext {
+        ExtendedContext {
+            mouse_state: MouseState::new(ctx),
+            font,
+            debug_render: vec![],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -50,12 +71,13 @@ impl MouseState {
 
 impl Game {
     pub fn new(ctx: &mut Context) -> Game {
+        let font = graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap();
+        let mut ext_ctx = ExtendedContext::new(ctx, font);
         Game {
             screen: ScreenState::TitleScreen,
-            title_screen: TitleScreen::new(),
-            grid: Grid::new(ctx),
-            font: graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap(),
-            mouse_state: MouseState::new(ctx),
+            title_screen: TitleScreen::new(ctx, font),
+            grid: Grid::new(ctx, &mut ext_ctx),
+            ext_ctx: ext_ctx,
             last_screen_state: ScreenState::TitleScreen,
         }
     }
@@ -78,9 +100,9 @@ impl EventHandler for Game {
 
         self.last_screen_state = self.screen;
 
-        self.mouse_state.pos = ggez::input::mouse::position(ctx);
+        self.ext_ctx.mouse_state.pos = ggez::input::mouse::position(ctx);
 
-        println!("{:?}", self.mouse_state);
+        // println!("{:?}", self.mouse_state);
 
         Ok(())
     }
@@ -97,17 +119,27 @@ impl EventHandler for Game {
         )?;
 
         match self.screen {
-            ScreenState::TitleScreen => self.title_screen.draw(ctx, self.font)?,
-            ScreenState::InGame => self.grid.draw(ctx, &self.mouse_state, self.font)?,
+            ScreenState::TitleScreen => self.title_screen.draw(ctx, self.ext_ctx.font)?,
+            ScreenState::InGame => {
+                self.grid
+                    .draw(ctx, &self.ext_ctx.mouse_state, self.ext_ctx.font)?
+            }
             ScreenState::Quit => (),
         }
-        graphics::draw(ctx, &circle, (self.mouse_state.pos,))?;
+        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
         // FPS counter
         let text = format!("{}", ggez::timer::fps(ctx));
         let location = na::Point2::new(100.0, 500.0);
-        draw_text(ctx, text, self.font, 20.0, (location, RED))?;
+        draw_text(ctx, text, self.ext_ctx.font, DEFAULT_SCALE, (location, RED))?;
 
+        // Debug Rects
+        for (rect, color) in &self.ext_ctx.debug_render {
+            let rect =
+                graphics::Mesh::new_rectangle(ctx, graphics::DrawMode::fill(), *rect, *color)
+                    .unwrap();
+            graphics::draw(ctx, &rect, DrawParam::default())?;
+        }
         graphics::present(ctx)
     }
 
@@ -121,8 +153,8 @@ impl EventHandler for Game {
         let pos = mint::Point2 { x, y };
 
         // self.mouse_state.last_up = None;
-        self.mouse_state.last_down = Some(pos);
-        self.mouse_state.dragging = Some(pos);
+        self.ext_ctx.mouse_state.last_down = Some(pos);
+        self.ext_ctx.mouse_state.dragging = Some(pos);
 
         match self.screen {
             ScreenState::TitleScreen => (),
@@ -133,8 +165,8 @@ impl EventHandler for Game {
 
     fn mouse_button_up_event(&mut self, ctx: &mut Context, _button: MouseButton, x: f32, y: f32) {
         // self.mouse_state.last_down = None;
-        self.mouse_state.last_up = Some(mint::Point2 { x, y });
-        self.mouse_state.dragging = None;
+        self.ext_ctx.mouse_state.last_up = Some(mint::Point2 { x, y });
+        self.ext_ctx.mouse_state.dragging = None;
 
         match self.screen {
             ScreenState::TitleScreen => self
@@ -142,7 +174,7 @@ impl EventHandler for Game {
                 .mouse_up_upd8(mint::Point2 { x, y }, &mut self.screen),
             ScreenState::InGame => {
                 self.grid
-                    .mouse_up_upd8(ctx, &self.mouse_state, &mut self.screen)
+                    .mouse_up_upd8(ctx, &self.ext_ctx.mouse_state, &mut self.screen)
             }
             ScreenState::Quit => (),
         }
@@ -158,10 +190,7 @@ pub struct Grid {
     background_mesh: graphics::Mesh,
     restart: Button,
     main_menu: Button,
-    queen_button: Button, // todo: this is probably dumb, use a vector later on
-    rook_button: Button,
-    bishop_button: Button,
-    knight_button: Button,
+    promote_buttons: Vec<(Button, PieceType)>,
 }
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 enum UIState {
@@ -171,47 +200,71 @@ enum UIState {
 }
 
 impl Grid {
-    fn new(ctx: &mut Context) -> Grid {
+    fn new(ctx: &mut Context, ext_ctx: &mut ExtendedContext) -> Grid {
+        use PieceType::*;
+
+        let font = ext_ctx.font;
+        let square_size = 70.0;
+        let off_x = 10.0;
+        let off_y = 10.0;
+
+        // bounding box of the grid
+        let grid_bounding = Rect::new(off_x, off_y, 8.0 * square_size, 8.0 * square_size);
+        // the right empty margin
+        let margin = from_points(
+            grid_bounding.right(),
+            grid_bounding.top(),
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+        );
+
+        let button_size = Rect::new(DONTCARE, DONTCARE, 40.0, 35.0);
+        // the bounding box that the four buttons must fit in
+        let bounding_box = Rect::new(DONTCARE, DONTCARE, margin.w - 10.0, 35.0);
+        // center the bounding box at the bottom-center of the right margin
+        let bounding_box = align_bottom(grid_bounding, center_inside(margin, bounding_box));
+        // println!("bounding {:?}", bounding_box);
+        // ext_ctx.debug_render.push((bounding_box, TRANS_RED));
+
+        // make the buttons
+        let promote_rects = distribute_horiz(4, bounding_box, button_size);
+        let promote_strs = vec![QUEEN_STR, ROOK_STR, BISHOP_STR, KNIGHT_STR];
+        let promote_pieces = vec![Queen, Rook, Bishop, Knight];
+        let promote_text = vec![
+            text(QUEEN_STR, font, 40.0),
+            text(ROOK_STR, font, 40.0),
+            text(BISHOP_STR, font, 40.0),
+            text(KNIGHT_STR, font, 40.0),
+        ];
+
+        let mut promote_buttons = vec![];
+        for i in 0..4 {
+            let rect = promote_rects[i];
+            let str = promote_strs[i];
+            let piece = promote_pieces[i];
+            promote_buttons.push((Button::fit_to_text(ctx, rect, text(str, font, 40.0)), piece));
+        }
+
+        // ext_ctx
+        //     .debug_render
+        //     .push((promote_buttons[i].0.hitbox, TRANS_BLUE));
+        // println!("rect: {:?}, actual {:?}", promote_buttons[i].0.hitbox, rect);
+
         Grid {
-            square_size: 70.0,
-            offset: na::Vector2::new(10.0, 10.0),
+            square_size,
+            offset: na::Vector2::new(off_x, off_y),
             drop_locations: vec![],
             board: BoardState::new(Board::default()),
-            background_mesh: Grid::background_mesh(ctx, 70.0),
+            background_mesh: Grid::background_mesh(ctx, square_size),
             restart: Button::new(
                 Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT / 2.0 - 40.0, 100.0, 35.0),
-                "Restart Game",
+                text("Restart Game", font, DEFAULT_SCALE),
             ),
             main_menu: Button::new(
                 Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT / 2.0 + 40.0, 100.0, 35.0),
-                "Main Menu",
+                text("Main Menu", font, DEFAULT_SCALE),
             ),
-            queen_button: Button::new(
-                Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT - 40.0, 40.0, 35.0),
-                QUEEN_STR,
-            ),
-            rook_button: Button::new(
-                Rect::new(SCREEN_WIDTH * 0.75 + 40.0, SCREEN_HEIGHT - 40.0, 40.0, 35.0),
-                ROOK_STR,
-            ),
-            bishop_button: Button::new(
-                Rect::new(
-                    SCREEN_WIDTH * 0.75 + 40.0 * 2.0,
-                    SCREEN_HEIGHT - 40.0,
-                    40.0,
-                    35.0,
-                ),
-                BISHOP_STR,
-            ),
-            knight_button: Button::new(
-                Rect::new(
-                    SCREEN_WIDTH * 0.75 + 40.0 * 3.0,
-                    SCREEN_HEIGHT - 40.0,
-                    40.0,
-                    35.0,
-                ),
-                KNIGHT_STR,
-            ),
+            promote_buttons,
         }
     }
 
@@ -241,10 +294,9 @@ impl Grid {
                 self.restart.upd8(ctx);
             }
             Promote(_) => {
-                self.queen_button.upd8(ctx);
-                self.rook_button.upd8(ctx);
-                self.bishop_button.upd8(ctx);
-                self.knight_button.upd8(ctx);
+                for (button, _) in &mut self.promote_buttons {
+                    button.upd8(ctx);
+                }
             }
         }
     }
@@ -280,25 +332,12 @@ impl Grid {
                 }
             }
             Promote(coord) => {
-                if self.queen_button.pressed(mouse.pos) {
-                    self.board
-                        .promote(coord, PieceType::Queen)
-                        .expect("Expected promotion to work");
-                }
-                if self.rook_button.pressed(mouse.pos) {
-                    self.board
-                        .promote(coord, PieceType::Rook)
-                        .expect("Expected promotion to work");
-                }
-                if self.bishop_button.pressed(mouse.pos) {
-                    self.board
-                        .promote(coord, PieceType::Bishop)
-                        .expect("Expected promotion to work");
-                }
-                if self.knight_button.pressed(mouse.pos) {
-                    self.board
-                        .promote(coord, PieceType::Knight)
-                        .expect("Expected promotion to work");
+                for (button, piece) in &self.promote_buttons {
+                    if button.pressed(mouse.pos) {
+                        self.board
+                            .promote(coord, *piece)
+                            .expect("Expected promotion to work");
+                    }
                 }
             }
         }
@@ -321,10 +360,9 @@ impl Grid {
                 self.draw_game_over(ctx, font)?;
             }
             Promote(_) => {
-                self.queen_button.draw(ctx, font)?;
-                self.rook_button.draw(ctx, font)?;
-                self.bishop_button.draw(ctx, font)?;
-                self.knight_button.draw(ctx, font)?;
+                for (button, _) in &self.promote_buttons {
+                    button.draw(ctx, font)?;
+                }
             }
         }
 
@@ -532,17 +570,31 @@ enum ButtonState {
 #[derive(Debug)]
 pub struct Button {
     hitbox: Rect,
-    text: String,
     state: ButtonState,
+    text: graphics::Text,
 }
 
 impl Button {
-    fn new(hitbox: Rect, text: &str) -> Button {
+    fn new(hitbox: Rect, text: graphics::Text) -> Button {
         Button {
-            hitbox: hitbox,
-            text: text.to_owned(),
+            hitbox,
             state: ButtonState::Idle,
+            text,
         }
+    }
+
+    /// Return a button whose size is at least large enough to fit both min_hitbox
+    /// and the text. If the text would be larger than min_hitbox, it is centered on top of
+    /// min_hitbox.
+    fn fit_to_text(ctx: &mut Context, min_hitbox: Rect, text: Text) -> Button {
+        let (w, h) = text.dimensions(ctx);
+        let text_hitbox = center_inside(
+            min_hitbox,
+            Rect::new(min_hitbox.x, min_hitbox.y, w as f32, h as f32),
+        );
+        let hitbox = text_hitbox.combine_with(min_hitbox);
+
+        Button::new(hitbox, text)
     }
 
     fn pressed(&self, mouse_pos: mint::Point2<f32>) -> bool {
@@ -595,7 +647,7 @@ impl Button {
         graphics::draw(ctx, &button, (dest,))?;
 
         let location = get_center(self.hitbox);
-        draw_text_centered(ctx, self.text.as_str(), font, 20.0, (location, BLACK))?;
+        draw_centered(ctx, &self.text, (location, BLACK))?;
 
         Ok(())
     }
@@ -608,15 +660,21 @@ pub struct TitleScreen {
 }
 
 impl TitleScreen {
-    fn new() -> TitleScreen {
+    fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
         TitleScreen {
-            start_game: Button::new(
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.50, 300.0, 35.0),
-                "Start Game",
+            start_game: Button::fit_to_text(
+                ctx,
+                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.5, 300., 35.0),
+                text("Start Game", font, 30.0),
             ),
-            quit_game: Button::new(
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.75, 300.0, 35.0),
-                "Quit Game",
+            // start_game: Button::new(
+            //     center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.50, 300.0, 35.0),
+            //     "Start Game",
+            // ),
+            quit_game: Button::fit_to_text(
+                ctx,
+                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.6, 300.0, 35.0),
+                text("Quit Game", font, 30.0),
             ),
         }
     }
@@ -658,6 +716,34 @@ pub enum ScreenState {
     Quit,
 }
 
+// Evenly distribute a number of `goal_size` Rect inside of `bounding_box`.
+fn distribute_horiz(num_rects: u32, bounding_box: Rect, goal_size: Rect) -> Vec<Rect> {
+    let bounding_boxes = divide_horiz(num_rects, bounding_box);
+    let rects = bounding_boxes
+        .iter()
+        .map(|bounding| center_inside(*bounding, goal_size));
+
+    rects.collect()
+}
+
+// Evenly divide bounding_box into `num_rects` smaller rects, horizontally.
+fn divide_horiz(num_rects: u32, bounding_box: Rect) -> Vec<Rect> {
+    let offset_x = bounding_box.x;
+    let offset_y = bounding_box.y;
+    let width = bounding_box.w / num_rects as f32;
+    let height = bounding_box.h;
+    let mut rects = vec![];
+    for i in 0..num_rects {
+        rects.push(Rect::new(
+            i as f32 * width + offset_x,
+            offset_y,
+            width,
+            height,
+        ));
+    }
+    rects
+}
+
 // Returns a rect such that its center is located (x, y). Assumes that the
 // upper left corner of the Rect is where (x, y) is and that rectangles
 // grow to the right and downwards.
@@ -684,6 +770,44 @@ fn get_dims(rect: Rect) -> Rect {
 fn center_inside(outer: Rect, inner: Rect) -> Rect {
     let point = get_center(outer);
     center(point.x, point.y, inner.w, inner.h)
+}
+
+// Aligns the inner rect to the bottom of the outer rect
+fn align_bottom(outer: Rect, inner: Rect) -> Rect {
+    let outer_bottom = outer.y + outer.h;
+    Rect::new(inner.x, outer_bottom - inner.h, inner.w, inner.h)
+}
+
+fn from_points(start_x: f32, start_y: f32, end_x: f32, end_y: f32) -> Rect {
+    Rect::new(start_x, start_y, end_x - start_x, end_y - start_y)
+}
+
+fn text<T>(text: T, font: graphics::Font, scale: f32) -> Text
+where
+    T: Into<graphics::TextFragment>,
+{
+    let mut text = graphics::Text::new(text);
+    text.set_font(font, graphics::Scale::uniform(scale));
+    text
+}
+
+fn draw_centered<D, S>(ctx: &mut Context, mesh: &D, params: S) -> GameResult<()>
+where
+    S: Into<DrawParam>,
+    D: graphics::Drawable,
+{
+    let params: DrawParam = params.into();
+
+    // Find the point such that the mesh will be centered on `param.dest`
+    let dimensions = mesh.dimensions(ctx).unwrap();
+    let (width, height) = (dimensions.w, dimensions.h);
+    let location = mint::Point2 {
+        x: params.dest.x - width as f32 / 2.0,
+        y: params.dest.y - height as f32 / 2.0,
+    };
+    let params = params.dest(location);
+
+    graphics::draw(ctx, mesh, params)
 }
 
 // Draw some text using the font, scale, and parameters specified.
