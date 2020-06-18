@@ -1,4 +1,6 @@
 mod board;
+mod layout;
+mod rect;
 mod screen;
 
 use ggez::conf;
@@ -55,6 +57,7 @@ fn main() {
 
     let mut game_state = screen::Game::new(&mut ctx);
     // Run!
+
     match event::run(&mut ctx, &mut event_loop, &mut game_state) {
         Ok(_) => println!("Exited cleanly."),
         Err(e) => println!("Error occured: {}", e),

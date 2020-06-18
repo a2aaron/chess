@@ -1,4 +1,6 @@
 use crate::board::*;
+use crate::layout::*;
+use crate::rect::*;
 
 use ggez::event::{EventHandler, MouseButton};
 use ggez::graphics::{self, DrawParam, Rect, Text};
@@ -22,8 +24,11 @@ const DARK_GREY: graphics::Color = graphics::Color::new(0.25, 0.25, 0.25, 1.0);
 const BLACK: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
 const TRANSPARENT: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 0.0);
 const TRANS_RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 0.5);
+const TRANS_YELLOW: graphics::Color = graphics::Color::new(1.0, 1.0, 0.0, 0.5);
+const TRANS_GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 0.5);
+const TRANS_CYAN: graphics::Color = graphics::Color::new(0.0, 1.0, 1.0, 0.5);
 const TRANS_BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 0.5);
-
+const TRANS_PURPLE: graphics::Color = graphics::Color::new(1.0, 0.0, 1.0, 0.5);
 #[derive(Debug)]
 pub struct Game {
     screen: ScreenState,
@@ -73,6 +78,69 @@ impl Game {
     pub fn new(ctx: &mut Context) -> Game {
         let font = graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap();
         let mut ext_ctx = ExtendedContext::new(ctx, font);
+
+        let mut rect1 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect2 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect3 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect4 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect5 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect6 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect7 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let mut rect8 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
+        let vstack_bbox = from_dims(400.0, 400.0);
+        let hstack_bbox = from_dims(400.0, 200.0);
+        let panel_bbox = from_dims(200.0, 200.0);
+
+        let mut vstack = VStack {
+            bounding_box: vstack_bbox,
+            children: &mut [
+                &mut HStack {
+                    bounding_box: hstack_bbox,
+                    children: &mut [
+                        &mut HStack {
+                            bounding_box: panel_bbox,
+                            children: &mut [&mut rect1],
+                        },
+                        &mut HStack {
+                            bounding_box: panel_bbox,
+                            children: &mut [&mut rect2, &mut rect3],
+                        },
+                    ],
+                },
+                &mut HStack {
+                    bounding_box: hstack_bbox,
+                    children: &mut [
+                        &mut HStack {
+                            bounding_box: panel_bbox,
+                            children: &mut [&mut rect4, &mut rect5],
+                        },
+                        &mut VStack {
+                            bounding_box: panel_bbox,
+                            children: &mut [
+                                &mut rect6,
+                                &mut HStack {
+                                    bounding_box: panel_bbox,
+                                    children: &mut [&mut rect7, &mut rect8],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        vstack.layout(vstack.bounding_box.size());
+        vstack.set_position_relative(mint::Vector2 { x: 50.0, y: 50.0 });
+        ext_ctx.debug_render.push((vstack.bounding_box, LIGHT_GREY));
+        ext_ctx.debug_render.push((rect1, BLUE));
+        ext_ctx.debug_render.push((rect2, BLUE));
+        ext_ctx.debug_render.push((rect3, TRANS_YELLOW));
+        ext_ctx.debug_render.push((rect4, BLUE));
+        ext_ctx.debug_render.push((rect5, GREEN));
+        ext_ctx.debug_render.push((rect6, BLUE));
+        ext_ctx.debug_render.push((rect7, TRANSPARENT));
+        ext_ctx.debug_render.push((rect8, RED));
+
         Game {
             screen: ScreenState::TitleScreen,
             title_screen: TitleScreen::new(ctx, font),
@@ -135,6 +203,9 @@ impl EventHandler for Game {
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
+            if rect.x == DONTCARE || rect.y == DONTCARE {
+                println!("unset rect position! {:?}", rect);
+            }
             let rect =
                 graphics::Mesh::new_rectangle(ctx, graphics::DrawMode::fill(), *rect, *color)
                     .unwrap();
@@ -569,7 +640,7 @@ enum ButtonState {
 
 #[derive(Debug)]
 pub struct Button {
-    hitbox: Rect,
+    pub hitbox: Rect,
     state: ButtonState,
     text: graphics::Text,
 }
@@ -742,34 +813,6 @@ fn divide_horiz(num_rects: u32, bounding_box: Rect) -> Vec<Rect> {
         ));
     }
     rects
-}
-
-// Returns a rect such that its center is located (x, y). Assumes that the
-// upper left corner of the Rect is where (x, y) is and that rectangles
-// grow to the right and downwards.
-fn center(x: f32, y: f32, w: f32, h: f32) -> Rect {
-    Rect::new(x - w / 2.0, y - h / 2.0, w, h)
-}
-
-// Returns a point located at the center of the rectangle. Assumes that the
-// upper left corner of the Rect is where (x, y) is and that rectangles
-// grow to the right and downwards.
-fn get_center(rect: Rect) -> mint::Point2<f32> {
-    mint::Point2 {
-        x: rect.x + rect.w / 2.0,
-        y: rect.y + rect.h / 2.0,
-    }
-}
-
-// Returns a rectangle located at (0, 0) with dimensions (w, h)
-fn get_dims(rect: Rect) -> Rect {
-    Rect::new(0.0, 0.0, rect.w, rect.h)
-}
-
-// Return a rectangle the same size as inner, centered inside of outer
-fn center_inside(outer: Rect, inner: Rect) -> Rect {
-    let point = get_center(outer);
-    center(point.x, point.y, inner.w, inner.h)
 }
 
 // Aligns the inner rect to the bottom of the outer rect
