@@ -108,8 +108,6 @@ impl EventHandler for Game {
 
         self.ext_ctx.mouse_state.pos = ggez::input::mouse::position(ctx);
 
-        // println!("{:?}", self.mouse_state);
-
         Ok(())
     }
 
@@ -283,11 +281,12 @@ impl Grid {
         let mut button_stack = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut layout_buttons[..],
+            min_dimensions: (None, None),
         };
         let mut menu_buttons = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut [&mut self.restart, &mut self.main_menu],
-            min_width: 0.0,
+            min_dimensions: (None, None),
         };
 
         // Same size as the buttons, but used as padding
@@ -299,19 +298,26 @@ impl Grid {
                 &mut button_size.clone(),
                 &mut button_size.clone(),
             ],
+            min_dimensions: (None, None),
         };
 
-        let mut sidebar_children: [&mut dyn Layout; 4] = match self.board.current_player {
+        let mut padding1 = FlexBox::new(1.0);
+        let mut padding2 = FlexBox::new(1.0);
+        let mut sidebar_children: [&mut dyn Layout; 6] = match self.board.current_player {
             Color::White => [
                 &mut fake_stack,
+                &mut padding1,
                 &mut self.status,
                 &mut menu_buttons,
+                &mut padding2,
                 &mut button_stack,
             ],
             Color::Black => [
                 &mut button_stack,
+                &mut padding1,
                 &mut self.status,
                 &mut menu_buttons,
+                &mut padding2,
                 &mut fake_stack,
             ],
         };
@@ -319,15 +325,18 @@ impl Grid {
         let mut sidebar = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut sidebar_children,
-            min_width: SCREEN_WIDTH - grid.right() - 10.0,
+            min_dimensions: (Some(SCREEN_WIDTH - grid.right() - 10.0), Some(grid.h)),
         };
 
+        let mut padding3 = FlexBox::new(1.0);
         let mut full_ui = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [&mut grid, &mut sidebar],
+            children: &mut [&mut grid, &mut padding3, &mut sidebar],
+            min_dimensions: (Some(SCREEN_WIDTH - 20.0), None),
         };
 
         full_ui.layout((SCREEN_WIDTH - 20.0, SCREEN_HEIGHT - 20.0));
+
         full_ui.set_position_relative(mint::Vector2 { x: 10.0, y: 10.0 });
 
         // DEBUG
@@ -339,12 +348,17 @@ impl Grid {
         // ext_ctx
         //     .debug_render
         //     .push((menu_buttons.bounding_box(), TRANS_RED));
+        // ext_ctx.debug_render.push((padding1.bounding_box(), RED));
+        // ext_ctx.debug_render.push((padding2.bounding_box(), BLUE));
+        // ext_ctx.debug_render.push((padding3.bounding_box(), WHITE));
+        // println!("padding3 {:?}", padding3.bounding_box());
         // ext_ctx
         //     .debug_render
         //     .push((button_stack.bounding_box(), TRANS_PURPLE));
         // ext_ctx
         //     .debug_render
         //     .push((self.status.bounding_box, TRANS_CYAN));
+
         // ext_ctx
         //     .debug_render
         //     .push((fake_stack.bounding_box(), TRANS_GREEN));
@@ -806,17 +820,22 @@ impl TextBox {
 }
 
 impl Layout for TextBox {
-    fn size(&self) -> (f32, f32) {
-        self.bounding_box.size()
+    fn bounding_box(&self) -> Rect {
+        self.bounding_box
     }
-    fn layout(&mut self, max_size: (f32, f32)) {
+
+    fn layout(&mut self, max_size: (f32, f32)) -> (f32, f32) {
         self.bounding_box.layout(max_size)
     }
+
     fn set_position(&mut self, pos: ggez::mint::Point2<f32>) {
-        self.bounding_box.set_position(pos)
+        self.bounding_box.move_to(pos);
     }
     fn set_position_relative(&mut self, offset: ggez::mint::Vector2<f32>) {
-        self.bounding_box.set_position_relative(offset)
+        self.bounding_box.translate(offset);
+    }
+    fn preferred_size(&self) -> Option<(f32, f32)> {
+        self.bounding_box.preferred_size()
     }
 }
 
