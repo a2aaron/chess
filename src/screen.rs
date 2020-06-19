@@ -79,68 +79,6 @@ impl Game {
         let font = graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap();
         let mut ext_ctx = ExtendedContext::new(ctx, font);
 
-        let mut rect1 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect2 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect3 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect4 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect5 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect6 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect7 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let mut rect8 = Rect::new(DONTCARE, DONTCARE, 100.0, 100.0);
-        let vstack_bbox = from_dims(400.0, 400.0);
-        let hstack_bbox = from_dims(400.0, 200.0);
-        let panel_bbox = from_dims(200.0, 200.0);
-
-        let mut vstack = VStack {
-            bounding_box: vstack_bbox,
-            children: &mut [
-                &mut HStack {
-                    bounding_box: hstack_bbox,
-                    children: &mut [
-                        &mut HStack {
-                            bounding_box: panel_bbox,
-                            children: &mut [&mut rect1],
-                        },
-                        &mut HStack {
-                            bounding_box: panel_bbox,
-                            children: &mut [&mut rect2, &mut rect3],
-                        },
-                    ],
-                },
-                &mut HStack {
-                    bounding_box: hstack_bbox,
-                    children: &mut [
-                        &mut HStack {
-                            bounding_box: panel_bbox,
-                            children: &mut [&mut rect4, &mut rect5],
-                        },
-                        &mut VStack {
-                            bounding_box: panel_bbox,
-                            children: &mut [
-                                &mut rect6,
-                                &mut HStack {
-                                    bounding_box: panel_bbox,
-                                    children: &mut [&mut rect7, &mut rect8],
-                                },
-                            ],
-                        },
-                    ],
-                },
-            ],
-        };
-
-        vstack.layout(vstack.bounding_box.size());
-        vstack.set_position_relative(mint::Vector2 { x: 50.0, y: 50.0 });
-        ext_ctx.debug_render.push((vstack.bounding_box, LIGHT_GREY));
-        ext_ctx.debug_render.push((rect1, BLUE));
-        ext_ctx.debug_render.push((rect2, BLUE));
-        ext_ctx.debug_render.push((rect3, TRANS_YELLOW));
-        ext_ctx.debug_render.push((rect4, BLUE));
-        ext_ctx.debug_render.push((rect5, GREEN));
-        ext_ctx.debug_render.push((rect6, BLUE));
-        ext_ctx.debug_render.push((rect7, TRANSPARENT));
-        ext_ctx.debug_render.push((rect8, RED));
-
         Game {
             screen: ScreenState::TitleScreen,
             title_screen: TitleScreen::new(ctx, font),
@@ -162,7 +100,7 @@ impl EventHandler for Game {
 
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.upd8(ctx),
-            ScreenState::InGame => self.grid.upd8(ctx),
+            ScreenState::InGame => self.grid.upd8(ctx, &mut self.ext_ctx),
             ScreenState::Quit => ggez::event::quit(ctx),
         }
 
@@ -262,6 +200,7 @@ pub struct Grid {
     restart: Button,
     main_menu: Button,
     promote_buttons: Vec<(Button, PieceType)>,
+    status: TextBox,
 }
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 enum UIState {
@@ -273,14 +212,59 @@ enum UIState {
 impl Grid {
     fn new(ctx: &mut Context, ext_ctx: &mut ExtendedContext) -> Grid {
         use PieceType::*;
-
-        let font = ext_ctx.font;
         let square_size = 70.0;
+        let font = ext_ctx.font;
+
+        let button_size = Rect::new(DONTCARE, DONTCARE, 40.0, 35.0);
+        let promote_buttons = vec![
+            (
+                Button::fit_to_text(ctx, button_size, text(QUEEN_STR, font, 40.0)),
+                Queen,
+            ),
+            (
+                Button::fit_to_text(ctx, button_size, text(ROOK_STR, font, 40.0)),
+                Rook,
+            ),
+            (
+                Button::fit_to_text(ctx, button_size, text(BISHOP_STR, font, 40.0)),
+                Bishop,
+            ),
+            (
+                Button::fit_to_text(ctx, button_size, text(KNIGHT_STR, font, 40.0)),
+                Knight,
+            ),
+        ];
+
+        let mut grid = Grid {
+            square_size,
+            offset: na::Vector2::new(DONTCARE, DONTCARE),
+            drop_locations: vec![],
+            board: BoardState::new(Board::default()),
+            background_mesh: Grid::background_mesh(ctx, square_size),
+            restart: Button::new(
+                from_dims((100.0, 35.0)),
+                text("Restart Game", font, DEFAULT_SCALE),
+            ),
+            main_menu: Button::new(
+                from_dims((100.0, 35.0)),
+                text("Main Menu", font, DEFAULT_SCALE),
+            ),
+            status: TextBox {
+                bounding_box: from_dims((110.0, 100.0)),
+                text: Text::default(),
+            },
+            promote_buttons,
+        };
+        grid.relayout(ext_ctx);
+        grid
+    }
+
+    fn relayout(&mut self, ext_ctx: &mut ExtendedContext) {
         let off_x = 10.0;
         let off_y = 10.0;
 
-        // bounding box of the grid
-        let grid_bounding = Rect::new(off_x, off_y, 8.0 * square_size, 8.0 * square_size);
+        let grid_bounding = Rect::new(off_x, off_y, 8.0 * self.square_size, 8.0 * self.square_size);
+
         // the right empty margin
         let margin = from_points(
             grid_bounding.right(),
@@ -289,54 +273,84 @@ impl Grid {
             SCREEN_HEIGHT,
         );
 
-        let button_size = Rect::new(DONTCARE, DONTCARE, 40.0, 35.0);
-        // the bounding box that the four buttons must fit in
-        let bounding_box = Rect::new(DONTCARE, DONTCARE, margin.w - 10.0, 35.0);
-        // center the bounding box at the bottom-center of the right margin
-        let bounding_box = align_bottom(grid_bounding, center_inside(margin, bounding_box));
-        // println!("bounding {:?}", bounding_box);
-        // ext_ctx.debug_render.push((bounding_box, TRANS_RED));
-
-        // make the buttons
-        let promote_rects = distribute_horiz(4, bounding_box, button_size);
-        let promote_strs = vec![QUEEN_STR, ROOK_STR, BISHOP_STR, KNIGHT_STR];
-        let promote_pieces = vec![Queen, Rook, Bishop, Knight];
-        let promote_text = vec![
-            text(QUEEN_STR, font, 40.0),
-            text(ROOK_STR, font, 40.0),
-            text(BISHOP_STR, font, 40.0),
-            text(KNIGHT_STR, font, 40.0),
-        ];
-
-        let mut promote_buttons = vec![];
-        for i in 0..4 {
-            let rect = promote_rects[i];
-            let str = promote_strs[i];
-            let piece = promote_pieces[i];
-            promote_buttons.push((Button::fit_to_text(ctx, rect, text(str, font, 40.0)), piece));
+        let button_size = self.promote_buttons[0].0.hitbox;
+        let mut layout_buttons: Vec<&mut dyn Layout> = vec![];
+        for (button, _) in self.promote_buttons.iter_mut() {
+            layout_buttons.push(button);
         }
 
+        let mut grid = Rect::new(off_x, off_y, 8.0 * self.square_size, 8.0 * self.square_size);
+        let mut button_stack = HStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut layout_buttons[..],
+        };
+        let mut menu_buttons = VStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [&mut self.restart, &mut self.main_menu],
+            min_width: 0.0,
+        };
+
+        // Same size as the buttons, but used as padding
+        let mut fake_stack = HStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [
+                &mut button_size.clone(),
+                &mut button_size.clone(),
+                &mut button_size.clone(),
+                &mut button_size.clone(),
+            ],
+        };
+
+        let mut sidebar_children: [&mut dyn Layout; 4] = match self.board.current_player {
+            Color::White => [
+                &mut fake_stack,
+                &mut self.status,
+                &mut menu_buttons,
+                &mut button_stack,
+            ],
+            Color::Black => [
+                &mut button_stack,
+                &mut self.status,
+                &mut menu_buttons,
+                &mut fake_stack,
+            ],
+        };
+
+        let mut sidebar = VStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut sidebar_children,
+            min_width: SCREEN_WIDTH - grid.right() - 10.0,
+        };
+
+        let mut full_ui = HStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [&mut grid, &mut sidebar],
+        };
+
+        full_ui.layout((SCREEN_WIDTH - 20.0, SCREEN_HEIGHT - 20.0));
+        full_ui.set_position_relative(mint::Vector2 { x: 10.0, y: 10.0 });
+
+        // DEBUG
+        // ext_ctx.debug_render.clear();
+        // ext_ctx.debug_render.push((grid, TRANS_BLUE));
         // ext_ctx
         //     .debug_render
-        //     .push((promote_buttons[i].0.hitbox, TRANS_BLUE));
-        // println!("rect: {:?}, actual {:?}", promote_buttons[i].0.hitbox, rect);
+        //     .push((sidebar.bounding_box(), TRANS_YELLOW));
+        // ext_ctx
+        //     .debug_render
+        //     .push((menu_buttons.bounding_box(), TRANS_RED));
+        // ext_ctx
+        //     .debug_render
+        //     .push((button_stack.bounding_box(), TRANS_PURPLE));
+        // ext_ctx
+        //     .debug_render
+        //     .push((self.status.bounding_box, TRANS_CYAN));
+        // ext_ctx
+        //     .debug_render
+        //     .push((fake_stack.bounding_box(), TRANS_GREEN));
 
-        Grid {
-            square_size,
-            offset: na::Vector2::new(off_x, off_y),
-            drop_locations: vec![],
-            board: BoardState::new(Board::default()),
-            background_mesh: Grid::background_mesh(ctx, square_size),
-            restart: Button::new(
-                Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT / 2.0 - 40.0, 100.0, 35.0),
-                text("Restart Game", font, DEFAULT_SCALE),
-            ),
-            main_menu: Button::new(
-                Rect::new(SCREEN_WIDTH * 0.75, SCREEN_HEIGHT / 2.0 + 40.0, 100.0, 35.0),
-                text("Main Menu", font, DEFAULT_SCALE),
-            ),
-            promote_buttons,
-        }
+        // todo: maybe make this stuff a layout and dont do Weird Rectangle
+        self.offset = na::Vector2::new(grid.x, grid.y);
     }
 
     fn new_game(&mut self) {
@@ -347,8 +361,8 @@ impl Grid {
             ".. .. .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
             "BP .. .. .. .. .. .. ..",
-            ".. BP .. .. .. .. .. WK",
-            ".. .. .. .. .. .. .. ..",
+            ".. BR .. .. .. .. .. WK",
+            ".. .. BR .. .. .. .. ..",
         ];
         let board = Board::from_string_vec(board);
         // let board = Board::default();
@@ -356,7 +370,21 @@ impl Grid {
         self.drop_locations = vec![];
     }
 
-    fn upd8(&mut self, ctx: &mut Context) {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
+        // Update status message
+        let player_str = self.board.current_player.as_str();
+
+        let status_text = match self.board.checkmate {
+            CheckmateState::Stalemate => "The game has ended in a stalemate!".to_owned(),
+            CheckmateState::Checkmate => {
+                ["The game has ended!\n", player_str, " is in checkmate!"].concat()
+            }
+            CheckmateState::Check => [player_str, " is in check!"].concat(),
+            CheckmateState::Normal => [player_str, " to move."].concat(),
+        };
+        self.status.text = text(status_text, ext_ctx.font, 25.0);
+
+        // Update buttons
         use UIState::*;
         match self.ui_state() {
             Normal => (),
@@ -370,6 +398,9 @@ impl Grid {
                 }
             }
         }
+
+        // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
+        self.relayout(ext_ctx);
     }
 
     fn mouse_down_upd8(&mut self, mouse_pos: mint::Point2<f32>) {
@@ -428,7 +459,8 @@ impl Grid {
         match self.ui_state() {
             Normal => (),
             GameOver => {
-                self.draw_game_over(ctx, font)?;
+                self.restart.draw(ctx, font)?;
+                self.main_menu.draw(ctx, font)?;
             }
             Promote(_) => {
                 for (button, _) in &self.promote_buttons {
@@ -437,20 +469,7 @@ impl Grid {
             }
         }
 
-        // TODO: It is probably better to store this as a text mesh? Maybe pregenerate
-        // all the possible texts I want to draw?
-        let text = match self.board.current_player {
-            Color::Black => "Black to move",
-            Color::White => "White to move",
-        };
-        let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 50.0);
-        draw_text(ctx, text, font, 40.0, (location, RED))?;
-
-        if let Some(coord) = self.board.need_promote() {
-            let text = format!("Pawn at {:?} needs promotion!", coord);
-            let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 400.0);
-            draw_text(ctx, text, font, 20.0, (location, RED))?;
-        }
+        self.status.draw(ctx)?;
 
         Ok(())
     }
@@ -554,31 +573,6 @@ impl Grid {
                 graphics::draw(ctx, &hollow_rect, (offset, GREEN))?;
             }
         }
-
-        Ok(())
-    }
-
-    fn draw_game_over(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
-        let player_str = self.board.current_player.as_str();
-
-        let text = match self.board.checkmate {
-            CheckmateState::Stalemate => "The game has ended in a stalemate!".to_owned(),
-            CheckmateState::Checkmate => {
-                ["The game has ended!\n", player_str, " is in checkmate!"].concat()
-            }
-            _ => unreachable!(),
-        };
-        let location = self.to_screen_coord(BoardCoord(7, 7)) + na::Vector2::new(100.0, 200.0);
-        draw_text(ctx, text, font, 20.0, (location, RED))?;
-
-        // let fill: graphics::DrawMode = graphics::DrawMode::fill();
-        // let mut mesh = graphics::MeshBuilder::new();
-        // let solid_rect = Rect::new(0.0, 0.0, self.square_size, self.square_size);
-        // mesh.rectangle(fill, solid_rect, WHITE);
-        // let solid_rect = mesh.build(ctx).unwrap();
-
-        self.restart.draw(ctx, font)?;
-        self.main_menu.draw(ctx, font)?;
 
         Ok(())
     }
@@ -785,6 +779,45 @@ pub enum ScreenState {
     TitleScreen,
     InGame,
     Quit,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextBox {
+    bounding_box: Rect,
+    text: Text,
+}
+
+impl TextBox {
+    fn empty() -> TextBox {
+        TextBox {
+            bounding_box: Rect::default(),
+            text: Text::default(),
+        }
+    }
+    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+        let dims = (
+            self.text.dimensions(ctx).0 as f32,
+            self.text.dimensions(ctx).1 as f32,
+        );
+        let text_offset = center_inside(self.bounding_box, from_dims(dims).into());
+
+        graphics::draw(ctx, &self.text, (text_offset.point(), RED))
+    }
+}
+
+impl Layout for TextBox {
+    fn size(&self) -> (f32, f32) {
+        self.bounding_box.size()
+    }
+    fn layout(&mut self, max_size: (f32, f32)) {
+        self.bounding_box.layout(max_size)
+    }
+    fn set_position(&mut self, pos: ggez::mint::Point2<f32>) {
+        self.bounding_box.set_position(pos)
+    }
+    fn set_position_relative(&mut self, offset: ggez::mint::Vector2<f32>) {
+        self.bounding_box.set_position_relative(offset)
+    }
 }
 
 // Evenly distribute a number of `goal_size` Rect inside of `bounding_box`.

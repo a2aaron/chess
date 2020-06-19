@@ -11,7 +11,7 @@ pub fn get_center(rect: Rect) -> mint::Point2<f32> {
     }
 }
 
-pub fn from_dims(w: f32, h: f32) -> Rect {
+pub fn from_dims((w, h): (f32, f32)) -> Rect {
     Rect::new(0.0, 0.0, w, h)
 }
 

@@ -21,23 +21,31 @@ pub trait Layout {
     fn set_position_relative(&mut self, offset: Vector2<f32>);
 }
 pub struct VStack<'a> {
-    pub bounding_box: Rect,
+    pub pos: Point2<f32>,
     pub children: &'a mut [&'a mut dyn Layout],
+    pub min_width: f32, // The minimum width that this VStack is allowed to be. Use 0.0 for no minimum
 }
 
 impl<'a> Layout for VStack<'a> {
     fn size(&self) -> (f32, f32) {
-        (self.bounding_box.w, self.bounding_box.h)
+        let (mut size_x, mut size_y) = (self.min_width, 0.0f32);
+        for child in self.children.iter() {
+            let child_size = child.size();
+            size_x = size_x.max(child_size.0);
+            size_y += child_size.1;
+        }
+        (size_x, size_y)
     }
 
     fn layout(&mut self, max_size: (f32, f32)) {
         let mut rel_y = 0.0;
+        let size = self.size();
         for (i, child) in self.children.iter_mut().enumerate() {
             // Now for positioning.
             // Just stack the children on top of each other with no padding.
             // Center the child vertically within the VStack.
             let child_rect = Rect::new(0.0, rel_y, child.size().0, child.size().1);
-            // let child_rect = center_vert(self.bounding_box, child_rect);
+            let child_rect = center_vert(from_dims(size), child_rect);
             child.set_position(child_rect.point());
             child.layout((max_size.0, max_size.1 - rel_y));
 
@@ -46,40 +54,61 @@ impl<'a> Layout for VStack<'a> {
     }
 
     fn set_position(&mut self, pos: Point2<f32>) {
-        self.bounding_box.move_to(pos);
+        self.pos = pos;
     }
 
     fn set_position_relative(&mut self, offset: Vector2<f32>) {
         // First, move ourselves to the correct position
-        self.bounding_box.translate(offset);
+        self.pos = Point2 {
+            x: offset.x + self.pos.x,
+            y: offset.y + self.pos.y,
+        };
         for child in self.children.iter_mut() {
             // We stored the child position in relative coordinates, but now we
             // need to go to absolute coordinates, so we move by however much
             // bounding_box is offset.
-            let child_offset = Vector2::from(self.bounding_box.point());
+            let child_offset = Vector2::from(self.pos);
             child.set_position_relative(child_offset);
         }
     }
 }
 
+impl<'a> VStack<'a> {
+    pub fn bounding_box(&self) -> Rect {
+        Rect::new(self.pos.x, self.pos.y, self.size().0, self.size().1)
+    }
+}
+impl<'a> HStack<'a> {
+    pub fn bounding_box(&self) -> Rect {
+        Rect::new(self.pos.x, self.pos.y, self.size().0, self.size().1)
+    }
+}
+
 pub struct HStack<'a> {
-    pub bounding_box: Rect,
+    pub pos: Point2<f32>,
     pub children: &'a mut [&'a mut dyn Layout],
 }
 
 impl<'a> Layout for HStack<'a> {
     fn size(&self) -> (f32, f32) {
-        (self.bounding_box.w, self.bounding_box.h)
+        let (mut size_x, mut size_y) = (0.0f32, 0.0f32);
+        for child in self.children.iter() {
+            let child_size = child.size();
+            size_x += child_size.0;
+            size_y = size_y.max(child_size.1);
+        }
+        (size_x, size_y)
     }
 
     fn layout(&mut self, max_size: (f32, f32)) {
         let mut rel_x = 0.0;
+        let size = self.size();
         for (i, child) in self.children.iter_mut().enumerate() {
             // Now for positioning.
             // Just stack the children on top of each other with no padding.
             // Center the child horizontally within the HStack.
             let child_rect = Rect::new(rel_x, 0.0, child.size().0, child.size().1);
-            // let child_rect = center_horiz(self.bounding_box, child_rect);
+            let child_rect = center_horiz(from_dims(size), child_rect);
             child.set_position(child_rect.point());
             child.layout((max_size.0 - rel_x, max_size.1));
 
@@ -88,13 +117,20 @@ impl<'a> Layout for HStack<'a> {
     }
 
     fn set_position(&mut self, pos: Point2<f32>) {
-        self.bounding_box.move_to(pos);
+        self.pos = pos;
     }
 
     fn set_position_relative(&mut self, offset: Vector2<f32>) {
-        self.bounding_box.translate(offset);
+        // First, move ourselves to the correct position
+        self.pos = Point2 {
+            x: offset.x + self.pos.x,
+            y: offset.y + self.pos.y,
+        };
         for child in self.children.iter_mut() {
-            let child_offset = Vector2::from(self.bounding_box.point());
+            // We stored the child position in relative coordinates, but now we
+            // need to go to absolute coordinates, so we move by however much
+            // bounding_box is offset.
+            let child_offset = Vector2::from(self.pos);
             child.set_position_relative(child_offset);
         }
     }
