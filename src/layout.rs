@@ -68,7 +68,7 @@ impl<'a> Layout for VStack<'a> {
         let size = self.preferred_size().unwrap();
         let remaining_height = size.1 - self.min_size().1;
 
-        for (i, child) in self.children.iter_mut().enumerate() {
+        for child in self.children.iter_mut() {
             // Now for positioning.
             // Just stack the children on top of each other with no padding.
             let max_child_height = match child.preferred_size() {
@@ -98,6 +98,14 @@ impl<'a> Layout for VStack<'a> {
             size.1 - rel_y < 1.0,
             format!("VStack height very different! {} {}", size.1, rel_y)
         );
+
+        if size.1 > max_size.1 {
+            println!(
+                "WARNING: Overfull VStack! max_size: {:?} actual_size: {:?}",
+                max_size, size
+            );
+        }
+
         size
     }
 
@@ -145,21 +153,6 @@ impl<'a> VStack<'a> {
         size
     }
 }
-impl<'a> HStack<'a> {
-    // Return the minimum size this HStack can be in order to fit all the
-    // children's preferred sizes. Children with no prefered size are assumed to be
-    // zero size.
-    fn min_size(&self) -> (f32, f32) {
-        let mut size = (0.0f32, 0.0f32);
-        for child in self.children.iter() {
-            if let Some((child_width, child_height)) = child.preferred_size() {
-                size.0 += child_width;
-                size.1 = size.1.max(child_height);
-            }
-        }
-        size
-    }
-}
 pub struct HStack<'a> {
     pub pos: Point2<f32>,
     pub children: &'a mut [&'a mut dyn Layout],
@@ -193,7 +186,7 @@ impl<'a> Layout for HStack<'a> {
         // the amount of width each flexbox must share
         let remaining_width = size.0 - self.min_size().0;
 
-        for (i, child) in self.children.iter_mut().enumerate() {
+        for child in self.children.iter_mut() {
             // Now for positioning.
             // Just stack the children on top of each other with no padding.
             let max_child_width = match child.preferred_size() {
@@ -254,6 +247,22 @@ impl<'a> Layout for HStack<'a> {
     }
 }
 
+impl<'a> HStack<'a> {
+    // Return the minimum size this HStack can be in order to fit all the
+    // children's preferred sizes. Children with no prefered size are assumed to be
+    // zero size.
+    fn min_size(&self) -> (f32, f32) {
+        let mut size = (0.0f32, 0.0f32);
+        for child in self.children.iter() {
+            if let Some((child_width, child_height)) = child.preferred_size() {
+                size.0 += child_width;
+                size.1 = size.1.max(child_height);
+            }
+        }
+        size
+    }
+}
+
 pub struct FlexBox {
     pub bounding_box: Option<Rect>,
     pub flex_factor: f32,
@@ -296,6 +305,26 @@ impl<'a> Layout for FlexBox {
     }
 }
 
+impl Layout for TextBox {
+    fn bounding_box(&self) -> Rect {
+        self.bounding_box
+    }
+
+    fn layout(&mut self, max_size: (f32, f32)) -> (f32, f32) {
+        self.bounding_box.layout(max_size)
+    }
+
+    fn set_position(&mut self, pos: ggez::mint::Point2<f32>) {
+        self.bounding_box.move_to(pos);
+    }
+    fn set_position_relative(&mut self, offset: ggez::mint::Vector2<f32>) {
+        self.bounding_box.translate(offset);
+    }
+    fn preferred_size(&self) -> Option<(f32, f32)> {
+        self.bounding_box.preferred_size()
+    }
+}
+
 impl<'a> Layout for Button {
     fn layout(&mut self, max_size: (f32, f32)) -> (f32, f32) {
         self.hitbox.layout(max_size)
@@ -323,7 +352,7 @@ impl<'a> Layout for Rect {
         Some((self.w, self.h))
     }
 
-    fn layout(&mut self, max_size: (f32, f32)) -> (f32, f32) {
+    fn layout(&mut self, _max_size: (f32, f32)) -> (f32, f32) {
         (self.w, self.h)
     }
 
@@ -342,21 +371,4 @@ impl<'a> Layout for Rect {
     fn flex_factor(&self) -> Option<f32> {
         None
     }
-}
-
-fn divide_vert(num_rects: u32, bounding_box: Rect) -> Vec<Rect> {
-    let offset_x = bounding_box.x;
-    let offset_y = bounding_box.y;
-    let width = bounding_box.w;
-    let height = bounding_box.h / num_rects as f32;
-    let mut rects = vec![];
-    for i in 0..num_rects {
-        rects.push(Rect::new(
-            offset_x,
-            i as f32 * height + offset_y,
-            width,
-            height,
-        ));
-    }
-    rects
 }

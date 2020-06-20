@@ -18,8 +18,8 @@ pub struct BoardState {
     pub board: Board,
     /// The color of the player-to-move
     pub current_player: Color,
-    dead_black: Vec<Piece>,
-    dead_white: Vec<Piece>,
+    pub dead_black: Vec<Piece>,
+    pub dead_white: Vec<Piece>,
     pub checkmate: CheckmateState,
 }
 
@@ -61,7 +61,13 @@ impl BoardState {
             Normal => {
                 self.board.check_move(self.current_player, start, end)?;
                 self.board.clear_just_lunged();
-                self.board.move_piece(start, end);
+                if let Some(captured_piece) = self.get(end).0 {
+                    match captured_piece.color {
+                        Black => self.dead_black.push(captured_piece),
+                        White => self.dead_white.push(captured_piece),
+                    }
+                }
+                self.board.move_piece(start, end)
             }
             Lunge => {
                 // A lunge is just a special case for a normal move, so we don't
@@ -74,8 +80,15 @@ impl BoardState {
             EnPassant(side) => {
                 self.board
                     .check_enpassant(self.current_player, start, side)?;
-                self.board.enpassant(start, end);
 
+                if let Some(captured_piece) = self.get(end).0 {
+                    match captured_piece.color {
+                        Black => self.dead_black.push(captured_piece),
+                        White => self.dead_white.push(captured_piece),
+                    }
+                }
+
+                self.board.enpassant(start, end);
                 // Don't clear the lunge flag until _after_ we check for enpassant
                 // (otherwise we will never be able to :P)
                 self.board.clear_just_lunged();
@@ -452,7 +465,6 @@ impl Board {
         direction: BoardSide,
     ) -> Result<(), &'static str> {
         use BoardSide::*;
-        use Color::*;
         // We expect that start and end are diagonal from each other
         // and that the captured pawn is "one rank behind" the the end location
         // where "behind" is relative to the player capturing.
@@ -1109,17 +1121,9 @@ impl Tile {
     /// Return a string representation of this Tile (currently uses unicode
     /// chess piece characters)
     pub fn as_str(&self) -> &'static str {
-        use PieceType::*;
         match self.0 {
             None => "",
-            Some(piece) => match piece.piece {
-                Pawn(_) => PAWN_STR,
-                Knight => KNIGHT_STR,
-                Bishop => BISHOP_STR,
-                Rook => ROOK_STR,
-                Queen => QUEEN_STR,
-                King => KING_STR,
-            },
+            Some(piece) => piece.as_str(),
         }
     }
 }
@@ -1138,6 +1142,12 @@ pub struct Piece {
     pub color: Color,
     piece: PieceType,
     has_moved: bool,
+}
+
+impl Piece {
+    pub fn as_str(&self) -> &'static str {
+        self.piece.as_str()
+    }
 }
 
 /// The available player colors.
@@ -1185,6 +1195,20 @@ pub enum PieceType {
     Rook,
     Queen,
     King,
+}
+
+impl PieceType {
+    pub fn as_str(&self) -> &'static str {
+        use PieceType::*;
+        match self {
+            Pawn(_) => PAWN_STR,
+            Knight => KNIGHT_STR,
+            Bishop => BISHOP_STR,
+            Rook => ROOK_STR,
+            Queen => QUEEN_STR,
+            King => KING_STR,
+        }
+    }
 }
 
 impl fmt::Display for PieceType {

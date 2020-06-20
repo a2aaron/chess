@@ -16,8 +16,11 @@ const DEFAULT_SCALE: f32 = 20.0;
 const DONTCARE: f32 = -999.0;
 
 const RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 1.0);
+const YELLOW: graphics::Color = graphics::Color::new(1.0, 1.0, 0.0, 1.0);
 const GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 1.0);
+const CYAN: graphics::Color = graphics::Color::new(0.0, 1.0, 1.0, 1.0);
 const BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 1.0);
+const PURPLE: graphics::Color = graphics::Color::new(1.0, 0.0, 1.0, 1.0);
 const WHITE: graphics::Color = graphics::Color::new(1.0, 1.0, 1.0, 1.0);
 const LIGHT_GREY: graphics::Color = graphics::Color::new(0.5, 0.5, 0.5, 1.0);
 const DARK_GREY: graphics::Color = graphics::Color::new(0.25, 0.25, 0.25, 1.0);
@@ -29,6 +32,7 @@ const TRANS_GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 0.5);
 const TRANS_CYAN: graphics::Color = graphics::Color::new(0.0, 1.0, 1.0, 0.5);
 const TRANS_BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 0.5);
 const TRANS_PURPLE: graphics::Color = graphics::Color::new(1.0, 0.0, 1.0, 0.5);
+
 #[derive(Debug)]
 pub struct Game {
     screen: ScreenState,
@@ -36,42 +40,6 @@ pub struct Game {
     grid: Grid,
     last_screen_state: ScreenState, // used to detect state transitions
     ext_ctx: ExtendedContext,
-}
-
-#[derive(Debug)]
-pub struct ExtendedContext {
-    mouse_state: MouseState,
-    font: graphics::Font,
-    debug_render: Vec<(Rect, graphics::Color)>, // the debug rectangles. Rendered in red on top of everything else.
-}
-
-impl ExtendedContext {
-    fn new(ctx: &mut Context, font: graphics::Font) -> ExtendedContext {
-        ExtendedContext {
-            mouse_state: MouseState::new(ctx),
-            font,
-            debug_render: vec![],
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct MouseState {
-    last_down: Option<mint::Point2<f32>>, // The position of the last mouse down, if it exists
-    last_up: Option<mint::Point2<f32>>,   // The position of the last mouse up, if it exists
-    dragging: Option<mint::Point2<f32>>,  // Some(coord) if the mouse is pressed, else None
-    pos: mint::Point2<f32>,
-}
-
-impl MouseState {
-    fn new(ctx: &mut Context) -> MouseState {
-        MouseState {
-            last_down: None,
-            last_up: None,
-            dragging: None,
-            pos: ggez::input::mouse::position(ctx),
-        }
-    }
 }
 
 impl Game {
@@ -187,6 +155,104 @@ impl EventHandler for Game {
         }
     }
 }
+#[derive(Debug)]
+pub struct ExtendedContext {
+    mouse_state: MouseState,
+    font: graphics::Font,
+    debug_render: Vec<(Rect, graphics::Color)>, // the debug rectangles. Rendered in red on top of everything else.
+}
+
+impl ExtendedContext {
+    fn new(ctx: &mut Context, font: graphics::Font) -> ExtendedContext {
+        ExtendedContext {
+            mouse_state: MouseState::new(ctx),
+            font,
+            debug_render: vec![],
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MouseState {
+    last_down: Option<mint::Point2<f32>>, // The position of the last mouse down, if it exists
+    last_up: Option<mint::Point2<f32>>,   // The position of the last mouse up, if it exists
+    dragging: Option<mint::Point2<f32>>,  // Some(coord) if the mouse is pressed, else None
+    pos: mint::Point2<f32>,
+}
+
+impl MouseState {
+    fn new(ctx: &mut Context) -> MouseState {
+        MouseState {
+            last_down: None,
+            last_up: None,
+            dragging: None,
+            pos: ggez::input::mouse::position(ctx),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TitleScreen {
+    start_game: Button,
+    quit_game: Button,
+}
+
+impl TitleScreen {
+    fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
+        TitleScreen {
+            start_game: Button::fit_to_text(
+                ctx,
+                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.5, 300., 35.0),
+                text("Start Game", font, 30.0),
+            ),
+            // start_game: Button::new(
+            //     center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.50, 300.0, 35.0),
+            //     "Start Game",
+            // ),
+            quit_game: Button::fit_to_text(
+                ctx,
+                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.6, 300.0, 35.0),
+                text("Quit Game", font, 30.0),
+            ),
+        }
+    }
+
+    fn upd8(&mut self, ctx: &mut Context) {
+        self.start_game.upd8(ctx);
+        self.quit_game.upd8(ctx);
+    }
+
+    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
+        if self.start_game.pressed(mouse_pos) {
+            *screen_state = ScreenState::InGame;
+        }
+
+        if self.quit_game.pressed(mouse_pos) {
+            *screen_state = ScreenState::Quit;
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+        self.start_game.draw(ctx, font)?;
+        self.quit_game.draw(ctx, font)?;
+
+        let scale = 60.0;
+        let text = "CHESS";
+        let location = mint::Point2 {
+            x: SCREEN_WIDTH / 2.0,
+            y: SCREEN_HEIGHT * 0.25,
+        };
+        draw_text_centered(ctx, text, font, scale, (location, RED))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum ScreenState {
+    TitleScreen,
+    InGame,
+    Quit,
+}
 
 #[derive(Debug)]
 pub struct Grid {
@@ -199,12 +265,8 @@ pub struct Grid {
     main_menu: Button,
     promote_buttons: Vec<(Button, PieceType)>,
     status: TextBox,
-}
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
-enum UIState {
-    Normal,
-    Promote(BoardCoord),
-    GameOver,
+    dead_black: TextBox,
+    dead_white: TextBox,
 }
 
 impl Grid {
@@ -247,11 +309,10 @@ impl Grid {
                 from_dims((100.0, 35.0)),
                 text("Main Menu", font, DEFAULT_SCALE),
             ),
-            status: TextBox {
-                bounding_box: from_dims((110.0, 100.0)),
-                text: Text::default(),
-            },
+            status: TextBox::new(from_dims((110.0, 100.0))),
             promote_buttons,
+            dead_black: TextBox::new(from_dims((110.0, 100.0))),
+            dead_white: TextBox::new(from_dims((110.0, 100.0))),
         };
         grid.relayout(ext_ctx);
         grid
@@ -260,16 +321,6 @@ impl Grid {
     fn relayout(&mut self, ext_ctx: &mut ExtendedContext) {
         let off_x = 10.0;
         let off_y = 10.0;
-
-        let grid_bounding = Rect::new(off_x, off_y, 8.0 * self.square_size, 8.0 * self.square_size);
-
-        // the right empty margin
-        let margin = from_points(
-            grid_bounding.right(),
-            grid_bounding.top(),
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
-        );
 
         let button_size = self.promote_buttons[0].0.hitbox;
         let mut layout_buttons: Vec<&mut dyn Layout> = vec![];
@@ -302,22 +353,32 @@ impl Grid {
         };
 
         let mut padding1 = FlexBox::new(1.0);
-        let mut padding2 = FlexBox::new(1.0);
-        let mut sidebar_children: [&mut dyn Layout; 6] = match self.board.current_player {
+        let mut padding2 = FlexBox::new(2.0);
+        let mut padding3 = FlexBox::new(2.0);
+        let mut padding4 = FlexBox::new(1.0);
+        let mut sidebar_children: [&mut dyn Layout; 10] = match self.board.current_player {
             Color::White => [
                 &mut fake_stack,
                 &mut padding1,
+                &mut self.dead_black,
+                &mut padding2,
                 &mut self.status,
                 &mut menu_buttons,
-                &mut padding2,
+                &mut padding3,
+                &mut self.dead_white,
+                &mut padding4,
                 &mut button_stack,
             ],
             Color::Black => [
                 &mut button_stack,
                 &mut padding1,
+                &mut self.dead_black,
+                &mut padding2,
                 &mut self.status,
                 &mut menu_buttons,
-                &mut padding2,
+                &mut padding3,
+                &mut self.dead_white,
+                &mut padding4,
                 &mut fake_stack,
             ],
         };
@@ -328,10 +389,10 @@ impl Grid {
             min_dimensions: (Some(SCREEN_WIDTH - grid.right() - 10.0), Some(grid.h)),
         };
 
-        let mut padding3 = FlexBox::new(1.0);
+        let mut padding_side = FlexBox::new(1.0);
         let mut full_ui = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [&mut grid, &mut padding3, &mut sidebar],
+            children: &mut [&mut grid, &mut padding_side, &mut sidebar],
             min_dimensions: (Some(SCREEN_WIDTH - 20.0), None),
         };
 
@@ -347,39 +408,46 @@ impl Grid {
         //     .push((sidebar.bounding_box(), TRANS_YELLOW));
         // ext_ctx
         //     .debug_render
+        //     .push((padding_side.bounding_box(), WHITE));
+        // ext_ctx
+        //     .debug_render
         //     .push((menu_buttons.bounding_box(), TRANS_RED));
         // ext_ctx.debug_render.push((padding1.bounding_box(), RED));
         // ext_ctx.debug_render.push((padding2.bounding_box(), BLUE));
-        // ext_ctx.debug_render.push((padding3.bounding_box(), WHITE));
-        // println!("padding3 {:?}", padding3.bounding_box());
+        // ext_ctx.debug_render.push((padding3.bounding_box(), GREEN));
+        // ext_ctx.debug_render.push((padding4.bounding_box(), YELLOW));
         // ext_ctx
         //     .debug_render
         //     .push((button_stack.bounding_box(), TRANS_PURPLE));
         // ext_ctx
         //     .debug_render
         //     .push((self.status.bounding_box, TRANS_CYAN));
-
         // ext_ctx
         //     .debug_render
         //     .push((fake_stack.bounding_box(), TRANS_GREEN));
+        // ext_ctx
+        //     .debug_render
+        //     .push((self.dead_black.bounding_box(), TRANS_BLUE));
+        // ext_ctx
+        //     .debug_render
+        //     .push((self.dead_white.bounding_box(), TRANS_BLUE));
 
-        // todo: maybe make this stuff a layout and dont do Weird Rectangle
         self.offset = na::Vector2::new(grid.x, grid.y);
     }
 
     fn new_game(&mut self) {
-        let board = vec![
-            ".. .. .. .. .. .. .. ..",
-            "WP .. .. .. .. BK .. ..",
-            ".. WP .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            "BP .. .. .. .. .. .. ..",
-            ".. BR .. .. .. .. .. WK",
-            ".. .. BR .. .. .. .. ..",
-        ];
-        let board = Board::from_string_vec(board);
-        // let board = Board::default();
+        // let board = vec![
+        //     ".. .. .. .. .. .. .. ..",
+        //     "WP .. .. .. .. BK .. ..",
+        //     ".. WP .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     "BP .. .. .. .. .. .. ..",
+        //     ".. BR .. .. .. .. .. WK",
+        //     ".. .. BR .. .. .. .. ..",
+        // ];
+        // let board = Board::from_string_vec(board);
+        let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
     }
@@ -397,6 +465,9 @@ impl Grid {
             CheckmateState::Normal => [player_str, " to move."].concat(),
         };
         self.status.text = text(status_text, ext_ctx.font, 25.0);
+
+        self.dead_black.text = text(piece_vec_str(&self.board.dead_black), ext_ctx.font, 30.0);
+        self.dead_white.text = text(piece_vec_str(&self.board.dead_white), ext_ctx.font, 30.0);
 
         // Update buttons
         use UIState::*;
@@ -484,6 +555,8 @@ impl Grid {
         }
 
         self.status.draw(ctx)?;
+        self.dead_black.draw(ctx)?;
+        self.dead_white.draw(ctx)?;
 
         Ok(())
     }
@@ -639,11 +712,11 @@ impl Grid {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-enum ButtonState {
-    Idle,
-    Hover,
-    Pressed,
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+enum UIState {
+    Normal,
+    Promote(BoardCoord),
+    GameOver,
 }
 
 #[derive(Debug)]
@@ -732,82 +805,27 @@ impl Button {
     }
 }
 
-#[derive(Debug)]
-pub struct TitleScreen {
-    start_game: Button,
-    quit_game: Button,
-}
-
-impl TitleScreen {
-    fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
-        TitleScreen {
-            start_game: Button::fit_to_text(
-                ctx,
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.5, 300., 35.0),
-                text("Start Game", font, 30.0),
-            ),
-            // start_game: Button::new(
-            //     center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.50, 300.0, 35.0),
-            //     "Start Game",
-            // ),
-            quit_game: Button::fit_to_text(
-                ctx,
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.6, 300.0, 35.0),
-                text("Quit Game", font, 30.0),
-            ),
-        }
-    }
-
-    fn upd8(&mut self, ctx: &mut Context) {
-        self.start_game.upd8(ctx);
-        self.quit_game.upd8(ctx);
-    }
-
-    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
-        if self.start_game.pressed(mouse_pos) {
-            *screen_state = ScreenState::InGame;
-        }
-
-        if self.quit_game.pressed(mouse_pos) {
-            *screen_state = ScreenState::Quit;
-        }
-    }
-
-    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
-        self.start_game.draw(ctx, font)?;
-        self.quit_game.draw(ctx, font)?;
-
-        let scale = 60.0;
-        let text = "CHESS";
-        let location = mint::Point2 {
-            x: SCREEN_WIDTH / 2.0,
-            y: SCREEN_HEIGHT * 0.25,
-        };
-        draw_text_centered(ctx, text, font, scale, (location, RED))?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum ScreenState {
-    TitleScreen,
-    InGame,
-    Quit,
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+enum ButtonState {
+    Idle,
+    Hover,
+    Pressed,
 }
 
 #[derive(Clone, Debug)]
 pub struct TextBox {
-    bounding_box: Rect,
+    pub bounding_box: Rect,
     text: Text,
 }
 
 impl TextBox {
-    fn empty() -> TextBox {
+    fn new(bounding_box: Rect) -> TextBox {
         TextBox {
-            bounding_box: Rect::default(),
+            bounding_box: bounding_box,
             text: Text::default(),
         }
     }
+
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         let dims = (
             self.text.dimensions(ctx).0 as f32,
@@ -819,62 +837,15 @@ impl TextBox {
     }
 }
 
-impl Layout for TextBox {
-    fn bounding_box(&self) -> Rect {
-        self.bounding_box
+fn piece_vec_str(pieces: &Vec<Piece>) -> String {
+    let mut string = String::new();
+    for (i, piece) in pieces.iter().enumerate() {
+        string.push_str(piece.as_str());
+        if i == 7 {
+            string.push('\n');
+        }
     }
-
-    fn layout(&mut self, max_size: (f32, f32)) -> (f32, f32) {
-        self.bounding_box.layout(max_size)
-    }
-
-    fn set_position(&mut self, pos: ggez::mint::Point2<f32>) {
-        self.bounding_box.move_to(pos);
-    }
-    fn set_position_relative(&mut self, offset: ggez::mint::Vector2<f32>) {
-        self.bounding_box.translate(offset);
-    }
-    fn preferred_size(&self) -> Option<(f32, f32)> {
-        self.bounding_box.preferred_size()
-    }
-}
-
-// Evenly distribute a number of `goal_size` Rect inside of `bounding_box`.
-fn distribute_horiz(num_rects: u32, bounding_box: Rect, goal_size: Rect) -> Vec<Rect> {
-    let bounding_boxes = divide_horiz(num_rects, bounding_box);
-    let rects = bounding_boxes
-        .iter()
-        .map(|bounding| center_inside(*bounding, goal_size));
-
-    rects.collect()
-}
-
-// Evenly divide bounding_box into `num_rects` smaller rects, horizontally.
-fn divide_horiz(num_rects: u32, bounding_box: Rect) -> Vec<Rect> {
-    let offset_x = bounding_box.x;
-    let offset_y = bounding_box.y;
-    let width = bounding_box.w / num_rects as f32;
-    let height = bounding_box.h;
-    let mut rects = vec![];
-    for i in 0..num_rects {
-        rects.push(Rect::new(
-            i as f32 * width + offset_x,
-            offset_y,
-            width,
-            height,
-        ));
-    }
-    rects
-}
-
-// Aligns the inner rect to the bottom of the outer rect
-fn align_bottom(outer: Rect, inner: Rect) -> Rect {
-    let outer_bottom = outer.y + outer.h;
-    Rect::new(inner.x, outer_bottom - inner.h, inner.w, inner.h)
-}
-
-fn from_points(start_x: f32, start_y: f32, end_x: f32, end_y: f32) -> Rect {
-    Rect::new(start_x, start_y, end_x - start_x, end_y - start_y)
+    string
 }
 
 fn text<T>(text: T, font: graphics::Font, scale: f32) -> Text
