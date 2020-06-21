@@ -12,6 +12,8 @@ use ggez::{Context, GameResult};
 pub const SCREEN_WIDTH: f32 = 800.0;
 pub const SCREEN_HEIGHT: f32 = 600.0;
 
+const DEBUG_LAYOUT: bool = false;
+
 const DEFAULT_SCALE: f32 = 20.0;
 const DONTCARE: f32 = -999.0;
 
@@ -51,7 +53,7 @@ impl Game {
             screen: ScreenState::TitleScreen,
             title_screen: TitleScreen::new(ctx, font),
             grid: Grid::new(ctx, &mut ext_ctx),
-            ext_ctx: ext_ctx,
+            ext_ctx,
             last_screen_state: ScreenState::TitleScreen,
         }
     }
@@ -92,10 +94,7 @@ impl EventHandler for Game {
 
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.ext_ctx.font)?,
-            ScreenState::InGame => {
-                self.grid
-                    .draw(ctx, &self.ext_ctx.mouse_state, self.ext_ctx.font)?
-            }
+            ScreenState::InGame => self.grid.draw(ctx, &self.ext_ctx)?,
             ScreenState::Quit => (),
         }
         graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
@@ -195,25 +194,42 @@ impl MouseState {
 pub struct TitleScreen {
     start_game: Button,
     quit_game: Button,
+    title: TextBox,
 }
 
 impl TitleScreen {
     fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
+        let mut start_game =
+            Button::fit_to_text(ctx, (300.0, 35.0), text("Start Game", font, 30.0));
+
+        let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
+
+        let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
+
+        let mut padding = from_dims((1.0, 25.0));
+        let mut padding2 = from_dims((1.0, SCREEN_HEIGHT * 0.25));
+
+        let mut vstack = VStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [
+                &mut title,
+                &mut padding2,
+                &mut start_game,
+                &mut padding,
+                &mut quit_game,
+            ],
+            min_dimensions: (Some(SCREEN_WIDTH), None),
+        };
+
+        vstack.layout(vstack.preferred_size().unwrap());
+        vstack.set_position_relative(mint::Vector2 {
+            x: 0.0,
+            y: SCREEN_HEIGHT * 0.25,
+        });
         TitleScreen {
-            start_game: Button::fit_to_text(
-                ctx,
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.5, 300., 35.0),
-                text("Start Game", font, 30.0),
-            ),
-            // start_game: Button::new(
-            //     center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.50, 300.0, 35.0),
-            //     "Start Game",
-            // ),
-            quit_game: Button::fit_to_text(
-                ctx,
-                center(SCREEN_WIDTH / 2.0, SCREEN_HEIGHT * 0.6, 300.0, 35.0),
-                text("Quit Game", font, 30.0),
-            ),
+            title,
+            start_game,
+            quit_game,
         }
     }
 
@@ -235,14 +251,8 @@ impl TitleScreen {
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         self.start_game.draw(ctx, font)?;
         self.quit_game.draw(ctx, font)?;
+        self.title.draw(ctx)?;
 
-        let scale = 60.0;
-        let text = "CHESS";
-        let location = mint::Point2 {
-            x: SCREEN_WIDTH / 2.0,
-            y: SCREEN_HEIGHT * 0.25,
-        };
-        draw_text_centered(ctx, text, font, scale, (location, RED))?;
         Ok(())
     }
 }
@@ -275,7 +285,7 @@ impl Grid {
         let square_size = 70.0;
         let font = ext_ctx.font;
 
-        let button_size = Rect::new(DONTCARE, DONTCARE, 40.0, 35.0);
+        let button_size = (40.0, 35.0);
         let promote_buttons = vec![
             (
                 Button::fit_to_text(ctx, button_size, text(QUEEN_STR, font, 40.0)),
@@ -301,18 +311,20 @@ impl Grid {
             drop_locations: vec![],
             board: BoardState::new(Board::default()),
             background_mesh: Grid::background_mesh(ctx, square_size),
-            restart: Button::new(
-                from_dims((100.0, 35.0)),
+            restart: Button::fit_to_text(
+                ctx,
+                (100.0, 35.0),
                 text("Restart Game", font, DEFAULT_SCALE),
             ),
-            main_menu: Button::new(
-                from_dims((100.0, 35.0)),
+            main_menu: Button::fit_to_text(
+                ctx,
+                (100.0, 35.0),
                 text("Main Menu", font, DEFAULT_SCALE),
             ),
-            status: TextBox::new(from_dims((110.0, 100.0))),
+            status: TextBox::new((110.0, 100.0)),
             promote_buttons,
-            dead_black: TextBox::new(from_dims((110.0, 100.0))),
-            dead_white: TextBox::new(from_dims((110.0, 100.0))),
+            dead_black: TextBox::new((110.0, 100.0)),
+            dead_white: TextBox::new((110.0, 100.0)),
         };
         grid.relayout(ext_ctx);
         grid
@@ -401,36 +413,38 @@ impl Grid {
         full_ui.set_position_relative(mint::Vector2 { x: 10.0, y: 10.0 });
 
         // DEBUG
-        // ext_ctx.debug_render.clear();
-        // ext_ctx.debug_render.push((grid, TRANS_BLUE));
-        // ext_ctx
-        //     .debug_render
-        //     .push((sidebar.bounding_box(), TRANS_YELLOW));
-        // ext_ctx
-        //     .debug_render
-        //     .push((padding_side.bounding_box(), WHITE));
-        // ext_ctx
-        //     .debug_render
-        //     .push((menu_buttons.bounding_box(), TRANS_RED));
-        // ext_ctx.debug_render.push((padding1.bounding_box(), RED));
-        // ext_ctx.debug_render.push((padding2.bounding_box(), BLUE));
-        // ext_ctx.debug_render.push((padding3.bounding_box(), GREEN));
-        // ext_ctx.debug_render.push((padding4.bounding_box(), YELLOW));
-        // ext_ctx
-        //     .debug_render
-        //     .push((button_stack.bounding_box(), TRANS_PURPLE));
-        // ext_ctx
-        //     .debug_render
-        //     .push((self.status.bounding_box, TRANS_CYAN));
-        // ext_ctx
-        //     .debug_render
-        //     .push((fake_stack.bounding_box(), TRANS_GREEN));
-        // ext_ctx
-        //     .debug_render
-        //     .push((self.dead_black.bounding_box(), TRANS_BLUE));
-        // ext_ctx
-        //     .debug_render
-        //     .push((self.dead_white.bounding_box(), TRANS_BLUE));
+        if DEBUG_LAYOUT {
+            ext_ctx.debug_render.clear();
+            ext_ctx.debug_render.push((grid, TRANS_BLUE));
+            ext_ctx
+                .debug_render
+                .push((sidebar.bounding_box(), TRANS_YELLOW));
+            ext_ctx
+                .debug_render
+                .push((padding_side.bounding_box(), WHITE));
+            ext_ctx
+                .debug_render
+                .push((menu_buttons.bounding_box(), TRANS_RED));
+            ext_ctx.debug_render.push((padding1.bounding_box(), RED));
+            ext_ctx.debug_render.push((padding2.bounding_box(), BLUE));
+            ext_ctx.debug_render.push((padding3.bounding_box(), GREEN));
+            ext_ctx.debug_render.push((padding4.bounding_box(), YELLOW));
+            ext_ctx
+                .debug_render
+                .push((button_stack.bounding_box(), TRANS_PURPLE));
+            ext_ctx
+                .debug_render
+                .push((self.status.bounding_box, TRANS_CYAN));
+            ext_ctx
+                .debug_render
+                .push((fake_stack.bounding_box(), TRANS_GREEN));
+            ext_ctx
+                .debug_render
+                .push((self.dead_black.bounding_box(), TRANS_BLUE));
+            ext_ctx
+                .debug_render
+                .push((self.dead_white.bounding_box(), TRANS_BLUE));
+        }
 
         self.offset = na::Vector2::new(grid.x, grid.y);
     }
@@ -531,7 +545,10 @@ impl Grid {
         self.drop_locations = vec![];
     }
 
-    fn draw(&self, ctx: &mut Context, mouse: &MouseState, font: graphics::Font) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
+        let font = ext_ctx.font;
+        let mouse = &ext_ctx.mouse_state;
+
         graphics::draw(ctx, &self.background_mesh, (na::Point2::from(self.offset),))?;
         if self.ui_state() == UIState::Normal {
             self.draw_highlights(ctx, mouse)?;
@@ -723,7 +740,7 @@ enum UIState {
 pub struct Button {
     pub hitbox: Rect,
     state: ButtonState,
-    text: graphics::Text,
+    pub text: TextBox,
 }
 
 impl Button {
@@ -731,22 +748,30 @@ impl Button {
         Button {
             hitbox,
             state: ButtonState::Idle,
-            text,
+            text: TextBox {
+                bounding_box: hitbox,
+                text,
+            },
         }
     }
 
     /// Return a button whose size is at least large enough to fit both min_hitbox
     /// and the text. If the text would be larger than min_hitbox, it is centered on top of
     /// min_hitbox.
-    fn fit_to_text(ctx: &mut Context, min_hitbox: Rect, text: Text) -> Button {
+    fn fit_to_text(ctx: &mut Context, min_dims: (f32, f32), text: Text) -> Button {
         let (w, h) = text.dimensions(ctx);
-        let text_hitbox = center_inside(
-            min_hitbox,
-            Rect::new(min_hitbox.x, min_hitbox.y, w as f32, h as f32),
-        );
-        let hitbox = text_hitbox.combine_with(min_hitbox);
-
-        Button::new(hitbox, text)
+        let text_rect = from_dims((w as f32, h as f32));
+        let min_hitbox = from_dims(min_dims);
+        let hitbox = text_rect.combine_with(min_hitbox);
+        // Button::new(hitbox, text)
+        Button {
+            hitbox,
+            state: ButtonState::Idle,
+            text: TextBox {
+                bounding_box: text_rect,
+                text,
+            },
+        }
     }
 
     fn pressed(&self, mouse_pos: mint::Point2<f32>) -> bool {
@@ -798,9 +823,7 @@ impl Button {
 
         graphics::draw(ctx, &button, (dest,))?;
 
-        let location = get_center(self.hitbox);
-        draw_centered(ctx, &self.text, (location, BLACK))?;
-
+        self.text.draw(ctx)?;
         Ok(())
     }
 }
@@ -819,14 +842,32 @@ pub struct TextBox {
 }
 
 impl TextBox {
-    fn new(bounding_box: Rect) -> TextBox {
+    fn new(dims: (f32, f32)) -> TextBox {
         TextBox {
-            bounding_box: bounding_box,
+            bounding_box: from_dims(dims),
             text: Text::default(),
         }
     }
 
+    fn fit_to_text(ctx: &mut Context, text: Text) -> TextBox {
+        let (w, h) = text.dimensions(ctx);
+        let bounding_box = from_dims((w as f32, h as f32));
+        TextBox { bounding_box, text }
+    }
+
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+        // DEBUG
+        if DEBUG_LAYOUT {
+            let rect = &graphics::Mesh::new_rectangle(
+                ctx,
+                graphics::DrawMode::fill(),
+                self.bounding_box,
+                TRANS_CYAN,
+            )
+            .unwrap();
+            graphics::draw(ctx, rect, DrawParam::default())?;
+        }
+
         let dims = (
             self.text.dimensions(ctx).0 as f32,
             self.text.dimensions(ctx).1 as f32,

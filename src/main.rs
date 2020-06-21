@@ -38,18 +38,6 @@ fn main() {
         )
         .build()
         .expect("could not create ggez context!");
-    // #[rustfmt::skip]
-    // let setup = vec![
-    //     ".. .. .. .. .. .. .. ..",
-    //     ".. .. .. WP .. .. BP ..",
-    //     ".. .. .. .. .. .. .. ..",
-    //     ".. .. .. .. .. .. .. ..",
-    //     ".. BP .. WQ .. .. .. ..",
-    //     ".. .. .. .. .. .. .. ..",
-    //     ".. BN .. .. .. .. .. ..",
-    //     ".. .. .. .. .. .. WQ ..",
-    // ];
-    // let board = Board::from_string_vec(setup);
 
     // Create an instance of your event handler.
     // Usually, you should provide it with the Context object to
