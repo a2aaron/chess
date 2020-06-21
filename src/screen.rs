@@ -763,7 +763,7 @@ impl Button {
         let text_rect = from_dims((w as f32, h as f32));
         let min_hitbox = from_dims(min_dims);
         let hitbox = text_rect.combine_with(min_hitbox);
-        // Button::new(hitbox, text)
+
         Button {
             hitbox,
             state: ButtonState::Idle,
@@ -823,7 +823,7 @@ impl Button {
 
         graphics::draw(ctx, &button, (dest,))?;
 
-        self.text.draw(ctx)?;
+        self.text.draw_with_color(ctx, BLACK)?;
         Ok(())
     }
 }
@@ -855,7 +855,7 @@ impl TextBox {
         TextBox { bounding_box, text }
     }
 
-    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+    fn draw_with_color(&self, ctx: &mut Context, color: graphics::Color) -> GameResult<()> {
         // DEBUG
         if DEBUG_LAYOUT {
             let rect = &graphics::Mesh::new_rectangle(
@@ -874,7 +874,11 @@ impl TextBox {
         );
         let text_offset = center_inside(self.bounding_box, from_dims(dims).into());
 
-        graphics::draw(ctx, &self.text, (text_offset.point(), RED))
+        graphics::draw(ctx, &self.text, (text_offset.point(), color))
+    }
+
+    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+        self.draw_with_color(ctx, RED)
     }
 }
 
