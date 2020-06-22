@@ -480,7 +480,10 @@ impl Grid {
         let player_str = self.board.current_player.as_str();
 
         let status_text = match self.board.checkmate {
-            CheckmateState::Stalemate => "The game has ended in a stalemate!".to_owned(),
+            CheckmateState::Stalemate => "The game has ended!\nStalemate!".to_owned(),
+            CheckmateState::InsuffientMaterial => {
+                "The game has ended!\nInsuffient material!".to_owned()
+            }
             CheckmateState::Checkmate => {
                 ["The game has ended!\n", player_str, " is in checkmate!"].concat()
             }

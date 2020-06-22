@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 const ROWS: std::ops::Range<i8> = 0..8;
@@ -140,7 +141,9 @@ impl BoardState {
     pub fn game_over(&self) -> bool {
         match self.board.checkmate_state(self.current_player) {
             CheckmateState::Normal | CheckmateState::Check => false,
-            CheckmateState::Checkmate | CheckmateState::Stalemate => true,
+            CheckmateState::Checkmate
+            | CheckmateState::Stalemate
+            | CheckmateState::InsuffientMaterial => true,
         }
     }
 
@@ -157,6 +160,7 @@ pub enum CheckmateState {
     Check,
     Checkmate,
     Stalemate,
+    InsuffientMaterial,
 }
 
 /// Wrapper struct around an 8x8 array of Tiles. This represents the state of
@@ -601,12 +605,45 @@ impl Board {
     /// Returns if the player is currently in checkmate
     fn checkmate_state(&self, player: Color) -> CheckmateState {
         use CheckmateState::*;
-        match (self.has_legal_moves(player), self.is_in_check(player)) {
-            (false, false) => Stalemate,
-            (false, true) => Checkmate,
-            (true, false) => Normal,
-            (true, true) => Check,
+        match (
+            self.has_legal_moves(player),
+            self.is_in_check(player),
+            self.insuffient_material(),
+        ) {
+            (false, false, false) => Stalemate,
+            (false, true, false) => Checkmate,
+            (true, false, false) => Normal,
+            (true, true, false) => Check,
+            (_, _, true) => InsuffientMaterial,
         }
+    }
+
+    fn insuffient_material(&self) -> bool {
+        let black_pieces = self.get_pieces(Color::Black);
+        let white_piece = self.get_pieces(Color::White);
+
+        let mut king_only: HashMap<PieceType, u8> = HashMap::new();
+        king_only.insert(PieceType::King, 1);
+        black_pieces == king_only && white_piece == king_only
+        // TODO: you should implement the other three cases where checkmate is impossible
+        // https://en.wikipedia.org/wiki/Draw_(chess)
+        /*
+        Impossibility of checkmate – if a position arises in which neither
+        player could possibly give checkmate by a series of legal moves, the
+        game is a draw ("dead position"). This is usually because there is
+        insufficient material left, but it is possible in other positions too.
+        Combinations with insufficient material to checkmate are:
+            king versus king
+            king and bishop versus king
+            king and knight versus king
+            king and bishop versus king and bishop with the bishops on the same color.
+        */
+        // let mut king_bishop: HashMap<PieceType, u8> = HashMap::new();
+        // king_bishop.insert(PieceType::King, 1);
+        // king_bishop.insert(PieceType::Bishop, 1);
+        // let mut king_bishop: HashMap<PieceType, u8> = HashMap::new();
+        // king_bishop.insert(PieceType::King, 1);
+        // king_bishop.insert(PieceType::Knight, 1);
     }
 
     fn is_in_check(&self, player: Color) -> bool {
@@ -722,6 +759,27 @@ impl Board {
             }
         }
         None
+    }
+
+    pub fn get_pieces(&self, color: Color) -> HashMap<PieceType, u8> {
+        let mut hashmap = HashMap::new();
+        for i in ROWS {
+            for j in COLS {
+                let coord = BoardCoord(i, j);
+                let tile = self.get(coord).0;
+                match tile {
+                    None => {}
+                    Some(piece) => {
+                        if piece.color == color {
+                            let entry = hashmap.entry(piece.piece).or_insert(0);
+                            *entry += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        hashmap
     }
 }
 
@@ -1155,7 +1213,7 @@ impl fmt::Display for Tile {
     }
 }
 /// A chess piece which has a color and the type of piece it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Piece {
     pub color: Color,
     piece: PieceType,
@@ -1169,7 +1227,7 @@ impl Piece {
 }
 
 /// The available player colors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Color {
     White,
     Black,
@@ -1205,7 +1263,7 @@ impl fmt::Display for Color {
 /// An enum that describes the six possible pieces
 /// `Pawn` has a `bool` associated with that is true if the piece has just
 /// lunged (moved two spaces) on the previous turn.S
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PieceType {
     Pawn(bool),
     Knight,
