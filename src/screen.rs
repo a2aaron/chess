@@ -1,3 +1,4 @@
+use crate::ai::*;
 use crate::board::*;
 use crate::layout::*;
 use crate::rect::*;
@@ -277,6 +278,8 @@ pub struct Grid {
     status: TextBox,
     dead_black: TextBox,
     dead_white: TextBox,
+    ai_black: Option<Box<dyn AIPlayer>>,
+    ai_white: Option<Box<dyn AIPlayer>>,
 }
 
 impl Grid {
@@ -325,6 +328,12 @@ impl Grid {
             promote_buttons,
             dead_black: TextBox::new((110.0, 100.0)),
             dead_white: TextBox::new((110.0, 100.0)),
+            ai_black: Some(Box::new(RandomPlayer {
+                player_color: Color::Black,
+            })),
+            ai_white: Some(Box::new(RandomPlayer {
+                player_color: Color::White,
+            })),
         };
         grid.relayout(ext_ctx);
         grid
@@ -498,20 +507,46 @@ impl Grid {
             }
         }
 
+        // Take AI turn, if need be
+        if !self.board.game_over() {
+            let ai = match self.board.current_player {
+                Color::White => &mut self.ai_white,
+                Color::Black => &mut self.ai_black,
+            };
+            if let Some(ai) = ai {
+                let (start, end) = ai.next_move(&self.board);
+                self.board.take_turn(start, end).expect(&format!(
+                    "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
+                    self.board.current_player, start, end, self.board
+                ));
+
+                // If this move would require the AI to promote a piece, then do it
+                if let Some(coord) = self.board.need_promote() {
+                    let piece = ai.next_promote(&self.board);
+                    self.board.promote(coord, piece).expect(&format!(
+                        "{} AI made illegal promote: {:?}\nboard:\n{:?}",
+                        self.board.current_player, piece, self.board
+                    ));
+                }
+            }
+        }
+
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
     }
 
     fn mouse_down_upd8(&mut self, mouse_pos: mint::Point2<f32>) {
-        let coord = self.to_grid_coord(mouse_pos);
-        match coord {
-            Err(_) => {
-                self.drop_locations = vec![];
-            }
-            Ok(coord) => {
-                self.drop_locations = self.board.get_move_list(coord);
-            }
-        };
+        if self.current_player_is_human() {
+            let coord = self.to_grid_coord(mouse_pos);
+            match coord {
+                Err(_) => {
+                    self.drop_locations = vec![];
+                }
+                Ok(coord) => {
+                    self.drop_locations = self.board.get_move_list(coord);
+                }
+            };
+        }
     }
 
     fn mouse_up_upd8(
@@ -522,7 +557,11 @@ impl Grid {
     ) {
         use UIState::*;
         match self.ui_state() {
-            Normal => self.move_piece(ctx, mouse),
+            Normal => {
+                if self.current_player_is_human() {
+                    self.move_piece(ctx, mouse)
+                }
+            }
             GameOver => {
                 if self.restart.pressed(mouse.pos) {
                     self.new_game();
@@ -543,6 +582,20 @@ impl Grid {
             }
         }
         self.drop_locations = vec![];
+    }
+
+    /// Called on mouse up events
+    /// Try to move the piece at the location of the last mouse down press to where the
+    /// mouse currently is. If a drag isn't being done, this function does nothing.
+    fn move_piece(&mut self, ctx: &mut Context, mouse: &MouseState) {
+        let dragging = self.to_grid_coord(mouse.last_down.unwrap());
+        let drop_loc = self.to_grid_coord(mouse.pos);
+        if drop_loc.is_err() || dragging.is_err() {
+            return;
+        }
+        let drop_loc = drop_loc.unwrap();
+        let dragging = dragging.unwrap();
+        println!("{:?}", self.board.take_turn(dragging, drop_loc));
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -578,20 +631,7 @@ impl Grid {
         Ok(())
     }
 
-    /// Call on mouse up
-    /// Try to move the piece at the location of the last mouse down press to where the
-    /// mouse currently is. A drag isn't being done, this function does nothing.
-    fn move_piece(&mut self, ctx: &mut Context, mouse: &MouseState) {
-        let dragging = self.to_grid_coord(mouse.last_down.unwrap());
-        let drop_loc = self.to_grid_coord(mouse.pos);
-        if drop_loc.is_err() || dragging.is_err() {
-            return;
-        }
-        let drop_loc = drop_loc.unwrap();
-        let dragging = dragging.unwrap();
-        println!("{:?}", self.board.take_turn(dragging, drop_loc));
-    }
-
+    /// Draw the pieces
     fn draw_pieces(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
         for i in 0..8 {
             for j in 0..8 {
@@ -616,6 +656,7 @@ impl Grid {
         Ok(())
     }
 
+    /// Draw the board highlights (current tile selected, places to move, etc)
     fn draw_highlights(&self, ctx: &mut Context, mouse: &MouseState) -> GameResult<()> {
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
 
@@ -681,6 +722,7 @@ impl Grid {
         Ok(())
     }
 
+    /// Construct the checkerboard mesh background
     fn background_mesh(ctx: &mut Context, square_size: f32) -> graphics::Mesh {
         let mut mesh = graphics::MeshBuilder::new();
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
@@ -703,6 +745,15 @@ impl Grid {
         mesh.build(ctx).unwrap()
     }
 
+    /// Returns true if the current player is a human player
+    fn current_player_is_human(&self) -> bool {
+        match self.board.current_player {
+            Color::White => self.ai_white.is_none(),
+            Color::Black => self.ai_black.is_none(),
+        }
+    }
+
+    /// Get the current UIState based on if it's game over or if a piece needs to be promoted
     fn ui_state(&self) -> UIState {
         match (self.board.game_over(), self.board.need_promote()) {
             (false, None) => UIState::Normal,

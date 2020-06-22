@@ -132,50 +132,9 @@ impl BoardState {
         Ok(())
     }
 
-    /// Return the list of valid places the piece at `coord` can move. This
-    /// function takes into account `current_player`. Note that the returned
-    /// vector is empty if any of the follow are true.
-    /// - `coord` is off the board
-    /// - `coord` refers to an empty tile
-    /// - `coord` refers to a piece that is the opposite color of `current_player`
-    /// - `coord` refers to a piece that has nowhere to move
-    /// Also note that this function DOES check if the move would place the
-    /// king into check.
-    /// This function also DOES check if the King can castle.
+    /// Return the list of valid moves for current player at the coordinate
     pub fn get_move_list(&self, coord: BoardCoord) -> Vec<BoardCoord> {
-        if !on_board(coord) {
-            return vec![];
-        }
-
-        if self.need_promote().is_some() {
-            return vec![];
-        }
-
-        // If not a piece
-        let tile = self.board.get(coord).0;
-        if tile.is_none() {
-            return vec![];
-        }
-
-        // If not a piece of the player's color
-        let piece = tile.unwrap();
-        if piece.color != self.current_player {
-            return vec![];
-        }
-
-        let mut list = get_move_list_full(&self.board, self.current_player, coord);
-        match piece.piece {
-            PieceType::King => {
-                list.0
-                    .append(&mut self.board.castle_locations(self.current_player));
-            }
-            PieceType::Pawn(_) => list
-                .0
-                .append(&mut self.board.enpassant_locations(self.current_player, coord)),
-            _ => {}
-        }
-
-        list.0
+        self.board.get_move_list(coord, self.current_player)
     }
 
     pub fn game_over(&self) -> bool {
@@ -312,6 +271,65 @@ impl Board {
         } else {
             Err("Can't move a piece there")
         }
+    }
+
+    /// Return the list of valid places the piece at `coord` can move for the
+    /// given `player`. Note that the returned vector is empty if any of the
+    /// following are true.
+    /// - `coord` is off the board
+    /// - `coord` refers to an empty tile
+    /// - `coord` refers to a piece that is the opposite color of `current_player`
+    /// - `coord` refers to a piece that has nowhere to move
+    /// Also note that this function DOES check if the move would place the
+    /// king into check.
+    /// This function also DOES check if the King can castle.
+    fn get_move_list(&self, coord: BoardCoord, player: Color) -> Vec<BoardCoord> {
+        if !on_board(coord) {
+            return vec![];
+        }
+
+        if self.pawn_needs_promotion().is_some() {
+            return vec![];
+        }
+
+        // If not a piece
+        let tile = self.get(coord).0;
+        if tile.is_none() {
+            return vec![];
+        }
+
+        // If not a piece of the player's color
+        let piece = tile.unwrap();
+        if piece.color != player {
+            return vec![];
+        }
+
+        let mut list = get_move_list_full(&self, player, coord);
+        match piece.piece {
+            PieceType::King => {
+                list.0.append(&mut self.castle_locations(player));
+            }
+            PieceType::Pawn(_) => list.0.append(&mut self.enpassant_locations(player, coord)),
+            _ => {}
+        }
+
+        list.0
+    }
+
+    /// Return the list of all valid moves that can be made by a player
+    pub fn get_all_moves(&self, player: Color) -> Vec<(BoardCoord, BoardCoord)> {
+        // TODO: this is probably hilariously inefficent
+        let mut moves = vec![];
+
+        for i in ROWS {
+            for j in COLS {
+                let start = BoardCoord(i, j);
+                let this_move_list = self.get_move_list(start, player);
+                let mut move_pairs = this_move_list.into_iter().map(|end| (start, end)).collect();
+                moves.append(&mut move_pairs);
+            }
+        }
+        moves
     }
 
     /// Castle the King of `color`. This function does not check if

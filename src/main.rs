@@ -1,3 +1,4 @@
+mod ai;
 mod board;
 mod layout;
 mod rect;

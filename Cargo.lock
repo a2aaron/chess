@@ -254,6 +254,7 @@ version = "0.1.0"
 dependencies = [
  "ggez",
  "newtype_derive",
+ "rand 0.7.3",
 ]
 
 [[package]]
