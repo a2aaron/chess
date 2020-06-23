@@ -328,12 +328,8 @@ impl Grid {
             promote_buttons,
             dead_black: TextBox::new((110.0, 100.0)),
             dead_white: TextBox::new((110.0, 100.0)),
-            ai_black: Some(Box::new(RandomPlayer {
-                player_color: Color::Black,
-            })),
-            ai_white: Some(Box::new(RandomPlayer {
-                player_color: Color::White,
-            })),
+            ai_black: Some(Box::new(TreeSearchPlayer {})),
+            ai_white: None, // Some(Box::new(MinOptPlayer {})),
         };
         grid.relayout(ext_ctx);
         grid
@@ -459,18 +455,18 @@ impl Grid {
     }
 
     fn new_game(&mut self) {
-        // let board = vec![
-        //     ".. .. .. .. .. .. .. ..",
-        //     "WP .. .. .. .. BK .. ..",
-        //     ".. WP .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     "BP .. .. .. .. .. .. ..",
-        //     ".. BR .. .. .. .. .. WK",
-        //     ".. .. BR .. .. .. .. ..",
-        // ];
-        // let board = Board::from_string_vec(board);
-        let board = Board::default();
+        let board = vec![
+            "BK .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "BR .. .. BR .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. WK",
+        ];
+        let board = Board::from_string_vec(board);
+        // let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
     }
@@ -517,7 +513,7 @@ impl Grid {
                 Color::Black => &mut self.ai_black,
             };
             if let Some(ai) = ai {
-                let (start, end) = ai.next_move(&self.board);
+                let (start, end) = ai.next_move(&self.board, self.board.current_player);
                 self.board.take_turn(start, end).expect(&format!(
                     "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
                     self.board.current_player, start, end, self.board

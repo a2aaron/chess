@@ -619,8 +619,8 @@ impl Board {
     }
 
     fn insuffient_material(&self) -> bool {
-        let black_pieces = self.get_pieces(Color::Black);
-        let white_piece = self.get_pieces(Color::White);
+        let black_pieces = self.get_pieces_hashmap(Color::Black);
+        let white_piece = self.get_pieces_hashmap(Color::White);
 
         let mut king_only: HashMap<PieceType, u8> = HashMap::new();
         king_only.insert(PieceType::King, 1);
@@ -761,7 +761,26 @@ impl Board {
         None
     }
 
-    pub fn get_pieces(&self, color: Color) -> HashMap<PieceType, u8> {
+    pub fn get_pieces_vec(&self, color: Color) -> Vec<Piece> {
+        let mut vec = vec![];
+        for i in ROWS {
+            for j in COLS {
+                let coord = BoardCoord(i, j);
+                let tile = self.get(coord).0;
+                match tile {
+                    None => (),
+                    Some(piece) => {
+                        if piece.color == color {
+                            vec.push(piece)
+                        }
+                    }
+                }
+            }
+        }
+        vec
+    }
+
+    pub fn get_pieces_hashmap(&self, color: Color) -> HashMap<PieceType, u8> {
         let mut hashmap = HashMap::new();
         for i in ROWS {
             for j in COLS {
@@ -1216,7 +1235,7 @@ impl fmt::Display for Tile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Piece {
     pub color: Color,
-    piece: PieceType,
+    pub piece: PieceType,
     has_moved: bool,
 }
 
@@ -1247,6 +1266,13 @@ impl Color {
         match self {
             Color::White => "White",
             Color::Black => "Black",
+        }
+    }
+
+    pub fn opposite(&self) -> Color {
+        match self {
+            Color::White => Color::Black,
+            Color::Black => Color::White,
         }
     }
 }
