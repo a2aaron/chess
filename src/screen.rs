@@ -328,7 +328,7 @@ impl Grid {
             promote_buttons,
             dead_black: TextBox::new((110.0, 100.0)),
             dead_white: TextBox::new((110.0, 100.0)),
-            ai_black: Some(Box::new(TreeSearchPlayer {})),
+            ai_black: None, // Some(Box::new(RandomPlayer {})),
             ai_white: None, // Some(Box::new(MinOptPlayer {})),
         };
         grid.relayout(ext_ctx);
@@ -457,16 +457,16 @@ impl Grid {
     fn new_game(&mut self) {
         let board = vec![
             "BK .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. WP ..",
             ".. .. .. .. .. .. .. ..",
             "BR .. .. BR .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
+            "BP .. .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. WK",
         ];
-        let board = Board::from_string_vec(board);
-        // let board = Board::default();
+        // let board = Board::from_string_vec(board);
+        let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
     }
@@ -652,6 +652,8 @@ impl Grid {
                 graphics::draw(ctx, text, (location, color))?;
             }
         }
+
+        draw_text_workaround(ctx);
         Ok(())
     }
 
@@ -924,7 +926,10 @@ impl TextBox {
         );
         let text_offset = center_inside(self.bounding_box, from_dims(dims).into());
 
-        graphics::draw(ctx, &self.text, (text_offset.point(), color))
+        graphics::draw(ctx, &self.text, (text_offset.point(), color))?;
+
+        draw_text_workaround(ctx);
+        Ok(())
     }
 
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
@@ -985,36 +990,20 @@ where
 {
     let mut text = graphics::Text::new(text);
     let text = text.set_font(font, graphics::Scale::uniform(scale));
-    graphics::draw(ctx, text, params)
+    graphics::draw(ctx, text, params)?;
+
+    draw_text_workaround(ctx);
+    Ok(())
 }
 
-// Draw some text using the font, scale, and parameters specified.
-// Note that the destination in the `DrawParams` is altered to be the center of
-// the text.
-fn draw_text_centered<T, S>(
-    ctx: &mut Context,
-    text: T,
-    font: graphics::Font,
-    scale: f32,
-    params: S,
-) -> GameResult<()>
-where
-    T: Into<graphics::TextFragment>,
-    S: Into<DrawParam>,
-{
-    let params: DrawParam = params.into();
-
-    // Make the text stuff
-    let mut text = graphics::Text::new(text);
-    let text = text.set_font(font, graphics::Scale::uniform(scale));
-
-    // Find the point such that the text will be centered on `param.dest`
-    let (width, height) = text.dimensions(ctx);
-    let location = mint::Point2 {
-        x: params.dest.x - width as f32 / 2.0,
-        y: params.dest.y - height as f32 / 2.0,
-    };
-    let params = params.dest(location);
-
-    graphics::draw(ctx, text, params)
+fn draw_text_workaround(ctx: &mut Context) {
+    // This workaround is nessecary because after a draw call with text,
+    // the DrawParam's dest is added to the next mesh draw.
+    // This results in bizarre flicker problems where the next mesh draw is
+    // displaced by the prior text draw's displacement. This fixes this issue
+    // by resyncronizing the transform, suggesting it might be a memory barrier problem.
+    // This issue started happened when I updated my Windows 10 laptop
+    // so I guess a graphics API's behavior changed in some way.
+    ggez::graphics::apply_transformations(ctx)
+        .expect("The Workaround Failed For Some Reason Oh God Oh Fuck");
 }
