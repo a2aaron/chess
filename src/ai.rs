@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 
+#[cfg(feature = "perf")]
+use flamer::flame;
+
 use crate::board::*;
 
 pub trait AIPlayer: std::fmt::Debug {
@@ -78,17 +81,20 @@ impl AIPlayer for MinOptPlayer {
 }
 
 #[derive(Debug)]
-pub struct TreeSearchPlayer {}
+pub struct TreeSearchPlayer {
+    pub depth: usize,
+}
 
 impl AIPlayer for TreeSearchPlayer {
     fn next_move(&mut self, board: &BoardState, player: Color) -> (BoardCoord, BoardCoord) {
         let (score, move_to_make) = self.score(board, 0, player);
-        println!("Best move: {:?} with score {:?}", move_to_make, score);
+        // println!("Best move: {:?} with score {:?}", move_to_make, score);
         move_to_make
     }
 }
 
 impl TreeSearchPlayer {
+    #[cfg_attr(feature = "perf", flame)]
     fn score(
         &self,
         position: &BoardState,
@@ -96,9 +102,9 @@ impl TreeSearchPlayer {
         player: Color,
     ) -> (i32, (BoardCoord, BoardCoord)) {
         // Explore only 2 moves ahead
-        if current_depth >= 3 {
-            let score = self.score_leaf(position, player);
-            println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
+        if current_depth >= self.depth || position.game_over() {
+            let score = self.score_leaf(current_depth, position, player);
+            // println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
             return (score, (BoardCoord(-2, -2), BoardCoord(-2, -2)));
         }
 
@@ -109,13 +115,13 @@ impl TreeSearchPlayer {
 
         // For each of our moves, try making it and see which one has the best score
         for (start, end) in moves {
-            println!(
-                "{}Now considering move: {:?} -> {:?} (player: {:?})",
-                "\t".repeat(current_depth),
-                start,
-                end,
-                position.current_player
-            );
+            // println!(
+            //     "{}Now considering move: {:?} -> {:?} (player: {:?})",
+            //     "\t".repeat(current_depth),
+            //     start,
+            //     end,
+            //     position.current_player
+            // );
             let mut next_position = position.clone();
             next_position.take_turn(start, end).expect(&format!(
                 "Expected {:?} -> {:?} to be a legal move!",
@@ -126,7 +132,7 @@ impl TreeSearchPlayer {
             if my_turn {
                 // is it is our turn, pick our best move
                 if best_score < score {
-                    println!("{}Found better move for me! new: {:?} -> {:?} (score: {:?}), old: {:?} (score: {:?})",  "\t".repeat(current_depth),start,end, score, best_move, best_score);
+                    // println!("{}Found better move for me! new: {:?} -> {:?} (score: {:?}), old: {:?} (score: {:?})",  "\t".repeat(current_depth),start,end, score, best_move, best_score);
                     best_score = score;
                     best_move = (start, end);
                 }
@@ -142,16 +148,17 @@ impl TreeSearchPlayer {
             debug_assert!(best_move != (BoardCoord(-1, -1), BoardCoord(-1, -1)));
         }
 
-        println!(
-            "{}Best move was: {:?} (score: {:?})",
-            "\t".repeat(current_depth),
-            best_move,
-            best_score
-        );
+        // println!(
+        //     "{}Best move was: {:?} (score: {:?})",
+        //     "\t".repeat(current_depth),
+        //     best_move,
+        //     best_score
+        // );
         (best_score, best_move)
     }
 
-    fn score_leaf(&self, position: &BoardState, player: Color) -> i32 {
+    #[cfg_attr(feature = "perf", flame)]
+    fn score_leaf(&self, current_depth: usize, position: &BoardState, player: Color) -> i32 {
         let my_turn = position.current_player == player;
         let bonus = match position.checkmate {
             CheckmateState::Normal => 0,
@@ -166,7 +173,7 @@ impl TreeSearchPlayer {
                 if my_turn {
                     -999
                 } else {
-                    999
+                    999 - current_depth as i32
                 }
             }
             CheckmateState::InsuffientMaterial | CheckmateState::Stalemate => -2,

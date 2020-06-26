@@ -328,7 +328,7 @@ impl Grid {
             promote_buttons,
             dead_black: TextBox::new((110.0, 100.0)),
             dead_white: TextBox::new((110.0, 100.0)),
-            ai_black: None, // Some(Box::new(RandomPlayer {})),
+            ai_black: Some(Box::new(TreeSearchPlayer { depth: 3 })),
             ai_white: None, // Some(Box::new(MinOptPlayer {})),
         };
         grid.relayout(ext_ctx);

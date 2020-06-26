@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
+#[cfg(feature = "perf")]
+use flame as fire;
+#[cfg(feature = "perf")]
+use flamer::flame;
+
 const ROWS: std::ops::Range<i8> = 0..8;
 const COLS: std::ops::Range<i8> = 0..8;
 pub const PAWN_STR: &str = "♟";
@@ -44,12 +49,15 @@ impl BoardState {
     /// "just_lunged" pawn flags.
     /// A pawn needs promotion then this function always fails. You should
     /// call `promote` on the pawn.
+    #[cfg_attr(feature = "perf", flame)]
     pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
         use Color::*;
         use MoveType::*;
-        if self.board.pawn_needs_promotion().is_some() {
-            return Err("A pawn needs to be promoted first.");
-        }
+
+        debug_assert!(self.board.pawn_needs_promotion().is_some());
+
+        #[cfg(feature = "perf")]
+        let guard = fire::start_guard("move check + apply");
 
         match move_type(&self.board, start, end) {
             Castle(color, side) => {
@@ -96,6 +104,9 @@ impl BoardState {
             }
         }
 
+        #[cfg(feature = "perf")]
+        drop(guard);
+
         if self.need_promote().is_none() {
             self.current_player = match self.current_player {
                 White => Black,
@@ -103,8 +114,14 @@ impl BoardState {
             };
         }
 
+        #[cfg(feature = "perf")]
+        flame::start("checkmate update");
+
         // Update the checkmate status
         self.checkmate = self.board.checkmate_state(self.current_player);
+
+        #[cfg(feature = "perf")]
+        flame::end("checkmate update");
 
         Ok(())
     }
@@ -321,6 +338,7 @@ impl Board {
     }
 
     /// Return the list of all valid moves that can be made by a player
+    #[cfg_attr(feature = "perf", flame)]
     pub fn get_all_moves(&self, player: Color) -> Vec<(BoardCoord, BoardCoord)> {
         // TODO: this is probably hilariously inefficent
         let mut moves = vec![];
@@ -569,9 +587,15 @@ impl Board {
         }
     }
 
+    #[cfg_attr(feature = "perf", flame)]
     /// Returns true if no piece of the opposite color threatens the square.
     fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
         // TODO: this is hilariously inefficient
+        // Instead of checking for if a piece threatens the square, instead
+        // check that the square has no pieces that could threaten it
+        // AKA: fan out in a queen shape (+ and x) and check for {rook, bishop, queen}
+        // then also check surroudning squares for knights, kings, pawns
+
         // Iterate over all of opposite `color`'s pieces, seeing if that
         // piece can attack the space.
         for i in ROWS {
@@ -583,14 +607,7 @@ impl Board {
                 }
                 let piece = tile.0.unwrap();
                 if piece.color != color {
-                    // Ignore check here. This is because a piece still threatens
-                    // a square even if that move would put the king into check
-                    // (ex: white can still threaten the black king, even if actually
-                    // making the move would put the white king into check, because
-                    // "in universe" the move that would kill BK happens before the
-                    // the move that would kill WK)
-                    let move_list = get_move_list_ignore_check(self, coord);
-                    if move_list.0.contains(&check_coord) {
+                    if self.piece_threatens(piece, coord, *check_coord) {
                         return false;
                     } else {
                         continue;
@@ -602,7 +619,80 @@ impl Board {
         true
     }
 
+    fn piece_threatens(&self, piece: Piece, coord: BoardCoord, target: BoardCoord) -> bool {
+        use PieceType::*;
+        debug_assert!(coord != target);
+
+        // This is a closure. || -> bool indicates that it returns bool and takes no parameters
+        // (Technically, you can elide the "-> bool" here, which I do in rook_check).
+        let bishop_check =
+            || -> bool {
+                let delta_x = target.0 - coord.0;
+                let delta_y = target.1 - coord.1;
+                let on_diagonal = delta_x.abs() == delta_y.abs();
+
+                if !on_diagonal {
+                    return false;
+                }
+
+                let delta = delta_x.abs();
+                match (delta_x > 0, delta_y > 0) {
+                    // Diagonally right up /
+                    (true, true) => (1..delta)
+                        .all(|i| self.get(BoardCoord(coord.0 + i, coord.1 + i)).0.is_none()),
+                    // Diagonally right down \
+                    (true, false) => (1..delta)
+                        .all(|i| self.get(BoardCoord(coord.0 + i, coord.1 - i)).0.is_none()),
+                    // Diagonally left up \
+                    (false, true) => (1..delta)
+                        .all(|i| self.get(BoardCoord(coord.0 - i, coord.1 + i)).0.is_none()),
+                    // Diagonally left down /
+                    (false, false) => (1..delta)
+                        .all(|i| self.get(BoardCoord(coord.0 - i, coord.1 - i)).0.is_none()),
+                }
+            };
+
+        let rook_check = || {
+            if target.0 == coord.0 {
+                let min = target.1.min(coord.1);
+                let max = target.1.max(coord.1);
+                // We do + 1 because this is not inclusive at either end
+                // Returns true so long as all interveening tiles are empty
+                ((min + 1)..max).all(|y| self.get(BoardCoord(target.0, y)).0.is_none())
+            } else if target.1 == coord.1 {
+                let min = target.0.min(coord.0);
+                let max = target.0.max(coord.0);
+                // We do + 1 because this is not inclusive at either end
+                // Returns true so long as all interveening tiles are empty
+                ((min + 1)..max).all(|x| self.get(BoardCoord(x, target.1)).0.is_none())
+            } else {
+                false
+            }
+        };
+
+        match piece.piece {
+            Pawn(_) => {
+                (target.0 == coord.0 + 1 || target.0 == coord.0 - 1)
+                    && (target.1 == coord.1 + piece.color.direction())
+            }
+            Knight => {
+                let x_abs = (target.0 - coord.0).abs();
+                let y_abs = (target.1 - coord.1).abs();
+                (x_abs == 2 && y_abs == 1) || (x_abs == 1 && y_abs == 2)
+            }
+            King => {
+                let x_abs = (target.0 - coord.0).abs();
+                let y_abs = (target.1 - coord.1).abs();
+                x_abs <= 1 && y_abs <= 1
+            }
+            Rook => rook_check(),
+            Bishop => bishop_check(),
+            Queen => rook_check() || bishop_check(),
+        }
+    }
+
     /// Returns if the player is currently in checkmate
+    #[cfg_attr(feature = "perf", flame)]
     fn checkmate_state(&self, player: Color) -> CheckmateState {
         use CheckmateState::*;
         match (
@@ -650,6 +740,7 @@ impl Board {
         !self.is_square_safe(player, &self.get_king(player).unwrap())
     }
 
+    #[cfg_attr(feature = "perf", flame)]
     fn has_legal_moves(&self, player: Color) -> bool {
         // TODO: this is also HILARIOUSLY INEFFICENT
         for i in ROWS {
@@ -838,6 +929,8 @@ pub struct MoveList(pub Vec<BoardCoord>);
 /// This function DOES check if a move made by the King would put the King into
 /// check and DOES NOT check if the King can castle. It also DOES NOT check if
 /// a pawn needs to be promoted.
+
+#[cfg_attr(feature = "perf", flame)]
 fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
     let list = get_move_list_ignore_check(&board, coord);
     // for each attempted move, see if moving there would
@@ -853,10 +946,18 @@ fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveLi
     // blocks LoS), but it would be attacked if WK actually did move
     // there.
     let mut filtered_list = vec![];
+    let king_coord = board.get_king(player).unwrap();
     for attempted_move in list.0 {
         let mut moved_board = board.clone();
         moved_board.move_piece(coord, attempted_move);
-        let king_coord = moved_board.get_king(player).unwrap();
+
+        // update king coord if we just moved the king
+        let king_coord = if coord == king_coord {
+            attempted_move
+        } else {
+            king_coord
+        };
+
         if moved_board.is_square_safe(player, &king_coord) {
             filtered_list.push(attempted_move);
         }
@@ -868,6 +969,7 @@ fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveLi
 /// that the player to move is whatever the color of the piece at `coord` is.
 /// This function does NOT check if a move made by the King would put the King into
 /// check.
+#[cfg_attr(feature = "perf", flame)]
 fn get_move_list_ignore_check(board: &Board, coord: BoardCoord) -> MoveList {
     let piece = board.get(coord).0;
     use PieceType::*;
