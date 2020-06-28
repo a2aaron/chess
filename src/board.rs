@@ -991,6 +991,9 @@ impl Board {
     }
 
     pub fn get_pieces_hashmap(&self, color: Color) -> HashMap<PieceType, u8> {
+        // TODO: Try to not use a hashmap here, the allocation is slow
+        // consider using a less rigorus hash function (we don't care about Good Crypto here)
+        // consider using a struct here also
         let mut hashmap = HashMap::new();
         for i in ROWS {
             for j in COLS {
@@ -1185,7 +1188,7 @@ fn check_line_of_sight_piece(
     board: &Board,
     pos: BoardCoord,
     color: Color,
-    line_of_sights: Vec<Vec<BoardCoord>>,
+    line_of_sights: impl Iterator<Item = LosIterator>,
     out: &mut MoveList,
 ) {
     for los in line_of_sights {
@@ -1209,44 +1212,48 @@ fn check_line_of_sight_piece(
     }
 }
 
+type LosIterator = std::iter::Map<std::ops::Range<i8>, fn(i8) -> BoardCoord>;
+
 /// Returns LoS for Rooks, Bishops, and Queens. Panics on other PieceTypes.
-fn get_los(piece: PieceType) -> Vec<Vec<BoardCoord>> {
+fn get_los(piece: PieceType) -> Box<dyn Iterator<Item = LosIterator>> {
     use PieceType::*;
     match piece {
-        Rook => get_los_rook(),
-        Bishop => get_los_bishop(),
-        Queen => [get_los_rook(), get_los_bishop()].concat(),
+        Rook => Box::new(get_los_rook()),
+        Bishop => Box::new(get_los_bishop()),
+        Queen => Box::new(get_los_rook().chain(get_los_bishop())),
         Pawn(_) | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
     }
 }
 
-fn get_los_rook() -> Vec<Vec<BoardCoord>> {
-    let mut los_right = Vec::new();
-    let mut los_left = Vec::new();
-    let mut los_up = Vec::new();
-    let mut los_down = Vec::new();
-    for i in 1..8 {
-        los_right.push(BoardCoord(i, 0));
-        los_left.push(BoardCoord(-i, 0));
-        los_up.push(BoardCoord(0, i));
-        los_down.push(BoardCoord(0, -i));
-    }
-    return vec![los_up, los_down, los_right, los_left];
+// needed to force the iterators below to not be closures and instead be
+// boring function types
+fn boring<T, U>(f: fn(T) -> U) -> fn(T) -> U {
+    f
 }
 
-fn get_los_bishop() -> Vec<Vec<BoardCoord>> {
-    let mut los_up_right = Vec::new();
-    let mut los_up_left = Vec::new();
-    let mut los_down_right = Vec::new();
-    let mut los_down_left = Vec::new();
-    for i in 1..8 {
-        los_up_right.push(BoardCoord(i, i));
-        los_up_left.push(BoardCoord(-i, i));
-        los_down_right.push(BoardCoord(i, -i));
-        los_down_left.push(BoardCoord(-i, -i));
-    }
+fn get_los_rook() -> impl Iterator<Item = LosIterator> {
+    let los_right = (1..8).map(boring(|i| BoardCoord(i, 0)));
+    let los_left = (1..8).map(boring(|i: i8| BoardCoord(-i, 0)));
+    let los_up = (1..8).map(boring(|i| BoardCoord(0, i)));
+    let los_down = (1..8).map(boring(|i: i8| BoardCoord(0, -i)));
+    use std::iter::once;
+    once(los_right)
+        .chain(once(los_left))
+        .chain(once(los_up))
+        .chain(once(los_down))
+}
 
-    return vec![los_up_right, los_up_left, los_down_right, los_down_left];
+fn get_los_bishop() -> impl Iterator<Item = LosIterator> {
+    let los_up_right = (1..8).map(boring(|i| BoardCoord(i, i)));
+    let los_up_left = (1..8).map(boring(|i: i8| BoardCoord(-i, i)));
+    let los_down_right = (1..8).map(boring(|i: i8| BoardCoord(i, -i)));
+    let los_down_left = (1..8).map(boring(|i: i8| BoardCoord(-i, -i)));
+
+    use std::iter::once;
+    once(los_up_right)
+        .chain(once(los_up_left))
+        .chain(once(los_down_right))
+        .chain(once(los_down_left))
 }
 
 /// Return a list of valid movement deltas (offsets from the piece) given a
@@ -2078,7 +2085,8 @@ mod tests {
 
         let coord = BoardCoord(coord.0, coord.1);
         let expected = to_move_list(expected);
-        let move_list = get_move_list_ignore_check(&board, coord);
+        let mut move_list = MoveList::reserved();
+        get_move_list_ignore_check(&board, coord, &mut move_list);
         println!("Board\n{:#?}", board);
         println!("Actual Move List");
         println!("{}", &move_list);
