@@ -596,17 +596,17 @@ impl Board {
         // AKA: fan out in a queen shape (+ and x) and check for {rook, bishop, queen}
         // then also check surroudning squares for knights, kings, pawns
 
-        fn first_nonempty(
-            board: &Board,
-            mut iter: impl Iterator<Item = BoardCoord>,
-        ) -> Option<Piece> {
-            iter.find_map(|coord| {
-                if on_board(coord) {
-                    board.get(coord).0
-                } else {
-                    None
+        fn first_nonempty(board: &Board, iter: impl Iterator<Item = BoardCoord>) -> Option<Piece> {
+            for coord in iter {
+                if !on_board(coord) {
+                    break;
                 }
-            })
+
+                if let Some(piece) = board.get(coord).0 {
+                    return Some(piece);
+                }
+            }
+            None
         }
 
         fn is_enemy_rook_or_queen(color: Color, piece: Option<Piece>) -> bool {

@@ -1,4 +1,5 @@
 [alias]
 perf = "run --release --bin alphabeta_perf --features=perf"
+time = "run --release --bin alphabeta_perf"
 chess = "run --release --bin chess"
 chess_debug = "run --bin chess"

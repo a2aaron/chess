@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use chess::ai;
 use chess::board;
 
@@ -7,6 +9,7 @@ use ai::AIPlayer;
 use flamescope;
 
 fn main() {
+    let now = Instant::now();
     let board = vec![
         ".. .. WR .. WR WK .. ..",
         "WP WP BR .. .. WP WP WP",
@@ -28,9 +31,12 @@ fn main() {
         .take_turn(start, end)
         .expect("Expected move to be legal!");
 
+    let duration = now.elapsed();
+
     println!("{}", old_board.board);
     println!("{}", board.board);
     println!("Done with alphabeta, now saving json file...");
+    println!("Took {:?}", duration);
 
     // Use https://www.speedscope.app/ to view the flamegraph!
     #[cfg(feature = "perf")]
