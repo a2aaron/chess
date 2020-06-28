@@ -42,7 +42,8 @@ pub trait Layout {
     /// Set the relative position of this Layout. Note that implementors should
     /// remember that the coordinates of the child are relative to itself own
     /// upper left corner, so you should typically write code that looks like this
-    /// ```
+    ///
+    /// ```ignore
     /// fn set_position_relative(&mut self, offset: Vector2<f32>) {
     ///     // set own position first
     ///     self.my_bounding_box.set_position_relative(offset);

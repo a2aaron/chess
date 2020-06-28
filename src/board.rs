@@ -54,7 +54,7 @@ impl BoardState {
         use Color::*;
         use MoveType::*;
 
-        debug_assert!(self.board.pawn_needs_promotion().is_some());
+        debug_assert!(self.board.pawn_needs_promotion().is_none());
 
         #[cfg(feature = "perf")]
         let guard = fire::start_guard("move check + apply");
@@ -589,29 +589,137 @@ impl Board {
 
     #[cfg_attr(feature = "perf", flame)]
     /// Returns true if no piece of the opposite color threatens the square.
-    fn is_square_safe(&self, color: Color, check_coord: &BoardCoord) -> bool {
+    fn is_square_safe(&self, color: Color, target: &BoardCoord) -> bool {
         // TODO: this is hilariously inefficient
         // Instead of checking for if a piece threatens the square, instead
         // check that the square has no pieces that could threaten it
         // AKA: fan out in a queen shape (+ and x) and check for {rook, bishop, queen}
         // then also check surroudning squares for knights, kings, pawns
 
-        // Iterate over all of opposite `color`'s pieces, seeing if that
-        // piece can attack the space.
-        for i in ROWS {
-            for j in COLS {
-                let coord = BoardCoord::new((j, i)).unwrap();
-                let tile = self.get(coord);
-                if tile.0.is_none() {
-                    continue;
+        fn first_nonempty(
+            board: &Board,
+            mut iter: impl Iterator<Item = BoardCoord>,
+        ) -> Option<Piece> {
+            iter.find_map(|coord| {
+                if on_board(coord) {
+                    board.get(coord).0
+                } else {
+                    None
                 }
-                let piece = tile.0.unwrap();
-                if piece.color != color {
-                    if self.piece_threatens(piece, coord, *check_coord) {
-                        return false;
-                    } else {
-                        continue;
-                    }
+            })
+        }
+
+        fn is_enemy_rook_or_queen(color: Color, piece: Option<Piece>) -> bool {
+            if let Some(piece) = piece {
+                return piece.color == color.opposite()
+                    && (piece.piece == PieceType::Rook || piece.piece == PieceType::Queen);
+            }
+            false
+        }
+
+        fn is_enemy_bishop_or_queen(color: Color, piece: Option<Piece>) -> bool {
+            if let Some(piece) = piece {
+                return piece.color == color.opposite()
+                    && (piece.piece == PieceType::Bishop || piece.piece == PieceType::Queen);
+            }
+            false
+        }
+
+        // Check for rooks, queens (+)
+        let up_los = (1..8).map(|i| BoardCoord(target.0, target.1 + i));
+        if is_enemy_rook_or_queen(color, first_nonempty(self, up_los)) {
+            return false;
+        }
+        let down_los = (1..8).map(|i| BoardCoord(target.0, target.1 - i));
+        if is_enemy_rook_or_queen(color, first_nonempty(self, down_los)) {
+            return false;
+        }
+        let right_los = (1..8).map(|i| BoardCoord(target.0 + i, target.1));
+        if is_enemy_rook_or_queen(color, first_nonempty(self, right_los)) {
+            return false;
+        }
+        let left_los = (1..8).map(|i| BoardCoord(target.0 - i, target.1));
+        if is_enemy_rook_or_queen(color, first_nonempty(self, left_los)) {
+            return false;
+        }
+
+        // Check for bishops, queens (x)
+        let up_right_los = (1..8).map(|i| BoardCoord(target.0 + i, target.1 + i));
+        if is_enemy_bishop_or_queen(color, first_nonempty(self, up_right_los)) {
+            return false;
+        }
+        let up_left_los = (1..8).map(|i| BoardCoord(target.0 - i, target.1 + i));
+        if is_enemy_bishop_or_queen(color, first_nonempty(self, up_left_los)) {
+            return false;
+        }
+        let down_right_los = (1..8).map(|i| BoardCoord(target.0 + i, target.1 - i));
+        if is_enemy_bishop_or_queen(color, first_nonempty(self, down_right_los)) {
+            return false;
+        }
+        let down_left_los = (1..8).map(|i| BoardCoord(target.0 - i, target.1 - i));
+        if is_enemy_bishop_or_queen(color, first_nonempty(self, down_left_los)) {
+            return false;
+        }
+
+        // Check for kings
+        let delta_coords = [
+            (1, 0),
+            (-1, 0),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+            (0, 1),
+            (0, -1),
+        ];
+        for delta in delta_coords.iter() {
+            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
+            if on_board_i8((x, y)) {
+                let check_coord = BoardCoord(x, y);
+                if self.get(check_coord).is(color.opposite(), PieceType::King) {
+                    return false;
+                }
+            }
+        }
+
+        // Check for knights
+        let delta_coords = [
+            (1, 2),
+            (1, -2),
+            (-1, 2),
+            (-1, -2),
+            (2, 1),
+            (2, -1),
+            (-2, 1),
+            (-2, -1),
+        ];
+        for delta in delta_coords.iter() {
+            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
+            if on_board_i8((x, y)) {
+                let check_coord = BoardCoord(x, y);
+                if self
+                    .get(check_coord)
+                    .is(color.opposite(), PieceType::Knight)
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Check for pawn
+        let delta_coords = match color {
+            Color::White => [(1, 1), (-1, 1)],
+            Color::Black => [(1, -1), (-1, -1)],
+        };
+        for delta in delta_coords.iter() {
+            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
+            if on_board_i8((x, y)) {
+                let check_coord = BoardCoord(x, y);
+                if self
+                    .get(check_coord)
+                    .is(color.opposite(), PieceType::Pawn(false))
+                {
+                    return false;
                 }
             }
         }
@@ -945,6 +1053,7 @@ fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveLi
     // BR can't attack the square to the right of WK (because WK
     // blocks LoS), but it would be attacked if WK actually did move
     // there.
+
     let mut filtered_list = vec![];
     let king_coord = board.get_king(player).unwrap();
     for attempted_move in list.0 {

@@ -3,10 +3,8 @@ use chess::board;
 
 use ai::AIPlayer;
 
+#[cfg(feature = "perf")]
 use flamescope;
-
-#[cfg(not(feature = "perf"))]
-compile_error!("Must be compiled with features=perf");
 
 fn main() {
     let board = vec![
@@ -34,5 +32,7 @@ fn main() {
     println!("{}", board.board);
     println!("Done with alphabeta, now saving json file...");
 
+    // Use https://www.speedscope.app/ to view the flamegraph!
+    #[cfg(feature = "perf")]
     flamescope::dump(&mut std::fs::File::create("flamegraph.json").unwrap()).unwrap();
 }

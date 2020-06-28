@@ -24,3 +24,6 @@ opt-level = 3
 [profile.release]
 debug = true
 
+[[bin]]
+name = "alphabeta_perf"
+test = false
