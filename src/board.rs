@@ -285,9 +285,13 @@ impl Board {
         if start_piece.color != player {
             return Err("Can't move a piece that isn't yours");
         }
-        let valid_end_spots = get_move_list_full(self, player, start).0;
 
-        if valid_end_spots.contains(&end) {
+        // TODO: use threatens/write a "can_move_to" function for this, which is
+        // way better than doing a ton of allocations & redundant checks.
+        let mut valid_end_spots = MoveList::reserved();
+        get_move_list_full(self, player, start, &mut valid_end_spots);
+
+        if valid_end_spots.0.contains(&end) {
             Ok(())
         } else {
             Err("Can't move a piece there")
@@ -325,7 +329,8 @@ impl Board {
             return vec![];
         }
 
-        let mut list = get_move_list_full(&self, player, coord);
+        let mut list = MoveList::reserved();
+        get_move_list_full(&self, player, coord, &mut list);
         match piece.piece {
             PieceType::King => {
                 list.0.append(&mut self.castle_locations(player));
@@ -855,14 +860,20 @@ impl Board {
             for j in COLS {
                 let coord = BoardCoord(j, i);
                 let tile = self.get(coord);
-                if tile.is_color(player) {
-                    if !get_move_list_full(self, player, coord).0.is_empty() {
-                        return true;
-                    }
+
+                if tile.is_color(player) && self.piece_has_legal_moves(player, coord) {
+                    return true;
                 }
             }
         }
         false
+    }
+
+    fn piece_has_legal_moves(&self, player: Color, coord: BoardCoord) -> bool {
+        // TODO just directly check if a piece can move, instead of calculating all possible moves (overkill)
+        let mut out = MoveList::reserved();
+        get_move_list_full(self, player, coord, &mut out);
+        !out.0.is_empty()
     }
 
     /// Returns Some(BoardCoord) if there is a pawn in the last rank that needs
@@ -1033,14 +1044,21 @@ impl BoardCoord {
 /// A list of spaces that a piece may move to.
 pub struct MoveList(pub Vec<BoardCoord>);
 
+impl MoveList {
+    fn reserved() -> MoveList {
+        // A queen on an empty board has up to 28 possible moves it can make
+        // (7 for each of its 4 lines of sight)
+        MoveList(Vec::with_capacity(28))
+    }
+}
+
 /// Return a MoveList of the piece located at `coord`.
 /// This function DOES check if a move made by the King would put the King into
 /// check and DOES NOT check if the King can castle. It also DOES NOT check if
 /// a pawn needs to be promoted.
-
 #[cfg_attr(feature = "perf", flame)]
-fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveList {
-    let list = get_move_list_ignore_check(&board, coord);
+fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord, out: &mut MoveList) {
+    get_move_list_ignore_check(&board, coord, out);
     // for each attempted move, see if moving there would
     // actually put the king in check. we need to actually move the
     // piece there because we want to avoid the chance that the
@@ -1053,10 +1071,8 @@ fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveLi
     // BR can't attack the square to the right of WK (because WK
     // blocks LoS), but it would be attacked if WK actually did move
     // there.
-
-    let mut filtered_list = vec![];
     let king_coord = board.get_king(player).unwrap();
-    for attempted_move in list.0 {
+    out.0.retain(|&attempted_move| {
         let mut moved_board = board.clone();
         moved_board.move_piece(coord, attempted_move);
 
@@ -1067,11 +1083,8 @@ fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveLi
             king_coord
         };
 
-        if moved_board.is_square_safe(player, &king_coord) {
-            filtered_list.push(attempted_move);
-        }
-    }
-    MoveList(filtered_list)
+        moved_board.is_square_safe(player, &king_coord)
+    });
 }
 
 /// Return a MoveList of the piece located at `coord`. This function assumes
@@ -1079,19 +1092,19 @@ fn get_move_list_full(board: &Board, player: Color, coord: BoardCoord) -> MoveLi
 /// This function does NOT check if a move made by the King would put the King into
 /// check.
 #[cfg_attr(feature = "perf", flame)]
-fn get_move_list_ignore_check(board: &Board, coord: BoardCoord) -> MoveList {
+fn get_move_list_ignore_check(board: &Board, coord: BoardCoord, out: &mut MoveList) {
     let piece = board.get(coord).0;
     use PieceType::*;
     match piece {
-        None => MoveList(vec![]),
+        None => (),
         Some(piece) => match piece.piece {
-            Pawn(_) => check_pawn(board, coord, piece.color),
+            Pawn(_) => check_pawn(board, coord, piece.color, out),
             Knight | King => {
-                check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece))
+                check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece), out)
             }
 
             Bishop | Rook | Queen => {
-                check_line_of_sight_piece(board, coord, piece.color, get_los(piece.piece))
+                check_line_of_sight_piece(board, coord, piece.color, get_los(piece.piece), out)
             }
         },
     }
@@ -1100,15 +1113,13 @@ fn get_move_list_ignore_check(board: &Board, coord: BoardCoord) -> MoveList {
 /// Get a list of the locations the pawn at `pos` can move to. The pawn's color
 /// is assumed to be `color`. Note that this function doesn't actually check if
 /// there is a pawn at `pos`.
-fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
-    let mut valid_end_pos = MoveList(Vec::new());
-
+fn check_pawn(board: &Board, pos: BoardCoord, color: Color, out: &mut MoveList) {
     // Check forward space if it can be moved into.
     let forwards = BoardCoord(pos.0, pos.1 + color.direction());
     let mut could_do_first_move = false;
     if on_board(forwards) {
         if board.get(forwards).0.is_none() {
-            valid_end_pos.0.push(forwards);
+            out.0.push(forwards);
             could_do_first_move = true;
         }
     }
@@ -1118,7 +1129,7 @@ fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
     let pawn = board.get(pos).0.unwrap();
     if on_board(double_move) {
         if board.get(double_move).0.is_none() && !pawn.has_moved && could_do_first_move {
-            valid_end_pos.0.push(double_move);
+            out.0.push(double_move);
         }
     }
 
@@ -1129,12 +1140,11 @@ fn check_pawn(board: &Board, pos: BoardCoord, color: Color) -> MoveList {
     ] {
         if on_board(diagonal) {
             match board.get(diagonal).0 {
-                Some(piece) if piece.color != color => valid_end_pos.0.push(diagonal),
+                Some(piece) if piece.color != color => out.0.push(diagonal),
                 _ => {}
             }
         }
     }
-    valid_end_pos
 }
 
 /// Get a list of valid locations the "jump" piece may move or capture to.
@@ -1148,8 +1158,8 @@ fn check_jump_piece(
     pos: BoardCoord,
     color: Color,
     move_deltas: Vec<BoardCoord>,
-) -> MoveList {
-    let mut valid_end_pos = MoveList(Vec::new());
+    out: &mut MoveList,
+) {
     for delta in move_deltas {
         let end_pos = BoardCoord(pos.0 + delta.0, pos.1 + delta.1 * color.direction());
         if !on_board(end_pos) {
@@ -1158,12 +1168,11 @@ fn check_jump_piece(
         // A piece may actually move to end_pos if the location is unoccupied
         // or contains a piece of the opposite color.
         match board.get(end_pos).0 {
-            Some(piece) if piece.color != color => valid_end_pos.0.push(end_pos),
-            None => valid_end_pos.0.push(end_pos),
+            Some(piece) if piece.color != color => out.0.push(end_pos),
+            None => out.0.push(end_pos),
             _ => {}
         }
     }
-    valid_end_pos
 }
 
 /// Get a list of valid locations the "LoS" piece may move or capture to.
@@ -1177,8 +1186,8 @@ fn check_line_of_sight_piece(
     pos: BoardCoord,
     color: Color,
     line_of_sights: Vec<Vec<BoardCoord>>,
-) -> MoveList {
-    let mut valid_end_pos = MoveList(Vec::new());
+    out: &mut MoveList,
+) {
     for los in line_of_sights {
         for delta in los {
             let end_pos = BoardCoord(pos.0 + delta.0, pos.1 + delta.1 * color.direction());
@@ -1189,17 +1198,15 @@ fn check_line_of_sight_piece(
 
             let end_piece = board.get(end_pos).0;
             if end_piece.is_none() {
-                valid_end_pos.0.push(end_pos);
+                out.0.push(end_pos);
             } else if let Some(piece) = end_piece {
                 if piece.color != color {
-                    valid_end_pos.0.push(end_pos);
+                    out.0.push(end_pos);
                 }
                 break;
             }
         }
     }
-
-    valid_end_pos
 }
 
 /// Returns LoS for Rooks, Bishops, and Queens. Panics on other PieceTypes.
