@@ -257,10 +257,8 @@ impl TitleScreen {
         if self.human_game.pressed(mouse_pos) {
             *screen_transition = ScreenTransition::StartGame(None, None);
         } else if self.ai_game.pressed(mouse_pos) {
-            *screen_transition = ScreenTransition::StartGame(
-                None,
-                Some(Box::new(TreeSearchPlayer::new(4)),
-            );
+            *screen_transition =
+                ScreenTransition::StartGame(None, Some(Box::new(TreeSearchPlayer::new(6))));
         }
 
         if self.quit_game.pressed(mouse_pos) {
@@ -491,18 +489,18 @@ impl Grid {
     }
 
     fn new_game(&mut self) {
-        // let board = vec![
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. WK .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. BN .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. BK .. ..",
-        //     ".. .. .. .. .. BR .. WR",
-        // ];
-        // let board = Board::from_string_vec(board);
-        let board = Board::default();
+        let board = vec![
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. WK .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            ".. .. .. .. .. .. .. ..",
+            "BP BP BP .. .. .. .. ..",
+            ".. BK .. .. .. .. .. ..",
+        ];
+        let board = Board::from_string_vec(board);
+        // let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
     }
