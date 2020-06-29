@@ -39,9 +39,9 @@ const TRANS_PURPLE: graphics::Color = graphics::Color::new(1.0, 0.0, 1.0, 0.5);
 #[derive(Debug)]
 pub struct Game {
     screen: ScreenState,
+    transition: ScreenTransition,
     title_screen: TitleScreen,
     grid: Grid,
-    last_screen_state: ScreenState, // used to detect state transitions
     ext_ctx: ExtendedContext,
 }
 
@@ -52,30 +52,36 @@ impl Game {
 
         Game {
             screen: ScreenState::TitleScreen,
+            transition: ScreenTransition::None,
             title_screen: TitleScreen::new(ctx, font),
             grid: Grid::new(ctx, &mut ext_ctx),
             ext_ctx,
-            last_screen_state: ScreenState::TitleScreen,
         }
     }
 }
 
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
-        // ScreenState transitions
-        // todo: this seems silly
-        match (self.last_screen_state, self.screen) {
-            (ScreenState::TitleScreen, ScreenState::InGame) => self.grid.new_game(),
-            _ => (),
+        // If we need to do some screen transition, then do it
+        match &mut self.transition {
+            ScreenTransition::StartGame(ai_white, ai_black) => {
+                self.grid.set_ais(ai_white.take(), ai_black.take());
+                self.grid.new_game();
+                self.screen = ScreenState::InGame;
+            }
+            ScreenTransition::ToTitleScreen => {
+                self.screen = ScreenState::TitleScreen;
+            }
+            ScreenTransition::QuitGame => ggez::event::quit(ctx),
+            ScreenTransition::None => (),
         }
+        // Now that we have done it, we set out transition to none
+        self.transition = ScreenTransition::None;
 
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.upd8(ctx),
             ScreenState::InGame => self.grid.upd8(ctx, &mut self.ext_ctx),
-            ScreenState::Quit => ggez::event::quit(ctx),
         }
-
-        self.last_screen_state = self.screen;
 
         self.ext_ctx.mouse_state.pos = ggez::input::mouse::position(ctx);
 
@@ -96,7 +102,6 @@ impl EventHandler for Game {
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.ext_ctx.font)?,
             ScreenState::InGame => self.grid.draw(ctx, &self.ext_ctx)?,
-            ScreenState::Quit => (),
         }
         graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
@@ -134,7 +139,6 @@ impl EventHandler for Game {
         match self.screen {
             ScreenState::TitleScreen => (),
             ScreenState::InGame => self.grid.mouse_down_upd8(pos),
-            ScreenState::Quit => (),
         }
     }
 
@@ -146,12 +150,11 @@ impl EventHandler for Game {
         match self.screen {
             ScreenState::TitleScreen => self
                 .title_screen
-                .mouse_up_upd8(mint::Point2 { x, y }, &mut self.screen),
+                .mouse_up_upd8(mint::Point2 { x, y }, &mut self.transition),
             ScreenState::InGame => {
                 self.grid
-                    .mouse_up_upd8(ctx, &self.ext_ctx.mouse_state, &mut self.screen)
+                    .mouse_up_upd8(ctx, &self.ext_ctx.mouse_state, &mut self.transition)
             }
-            ScreenState::Quit => (),
         }
     }
 }
@@ -193,30 +196,35 @@ impl MouseState {
 
 #[derive(Debug)]
 pub struct TitleScreen {
-    start_game: Button,
+    human_game: Button,
+    ai_game: Button,
     quit_game: Button,
     title: TextBox,
 }
 
 impl TitleScreen {
     fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
-        let mut start_game =
-            Button::fit_to_text(ctx, (300.0, 35.0), text("Start Game", font, 30.0));
+        let mut ai_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Player vs AI", font, 30.0));
+        let mut human_game =
+            Button::fit_to_text(ctx, (300.0, 35.0), text("Player vs Player", font, 30.0));
 
         let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
 
         let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
 
         let mut padding = from_dims((1.0, 25.0));
-        let mut padding2 = from_dims((1.0, SCREEN_HEIGHT * 0.25));
+        let mut padding2 = from_dims((1.0, 25.0));
+        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.25));
 
         let mut vstack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut [
                 &mut title,
-                &mut padding2,
-                &mut start_game,
+                &mut upper_padding,
+                &mut human_game,
                 &mut padding,
+                &mut ai_game,
+                &mut padding2,
                 &mut quit_game,
             ],
             min_dimensions: (Some(SCREEN_WIDTH), None),
@@ -229,28 +237,38 @@ impl TitleScreen {
         });
         TitleScreen {
             title,
-            start_game,
+            human_game,
+            ai_game,
             quit_game,
         }
     }
 
     fn upd8(&mut self, ctx: &mut Context) {
-        self.start_game.upd8(ctx);
+        self.ai_game.upd8(ctx);
+        self.human_game.upd8(ctx);
         self.quit_game.upd8(ctx);
     }
 
-    fn mouse_up_upd8(&mut self, mouse_pos: mint::Point2<f32>, screen_state: &mut ScreenState) {
-        if self.start_game.pressed(mouse_pos) {
-            *screen_state = ScreenState::InGame;
+    fn mouse_up_upd8(
+        &mut self,
+        mouse_pos: mint::Point2<f32>,
+        screen_transition: &mut ScreenTransition,
+    ) {
+        if self.human_game.pressed(mouse_pos) {
+            *screen_transition = ScreenTransition::StartGame(None, None);
+        } else if self.ai_game.pressed(mouse_pos) {
+            *screen_transition =
+                ScreenTransition::StartGame(None, Some(Box::new(TreeSearchPlayer { depth: 4 })));
         }
 
         if self.quit_game.pressed(mouse_pos) {
-            *screen_state = ScreenState::Quit;
+            *screen_transition = ScreenTransition::QuitGame;
         }
     }
 
     fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
-        self.start_game.draw(ctx, font)?;
+        self.human_game.draw(ctx, font)?;
+        self.ai_game.draw(ctx, font)?;
         self.quit_game.draw(ctx, font)?;
         self.title.draw(ctx)?;
 
@@ -258,11 +276,18 @@ impl TitleScreen {
     }
 }
 
+#[derive(Debug)]
+pub enum ScreenTransition {
+    None,
+    StartGame(Option<Box<dyn AIPlayer>>, Option<Box<dyn AIPlayer>>),
+    ToTitleScreen,
+    QuitGame,
+}
+
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ScreenState {
     TitleScreen,
     InGame,
-    Quit,
 }
 
 #[derive(Debug)]
@@ -328,11 +353,20 @@ impl Grid {
             promote_buttons,
             dead_black: TextBox::new((110.0, 100.0)),
             dead_white: TextBox::new((110.0, 100.0)),
-            ai_black: Some(Box::new(TreeSearchPlayer { depth: 3 })),
-            ai_white: None, // Some(Box::new(MinOptPlayer {})),
+            ai_black: None,
+            ai_white: None,
         };
         grid.relayout(ext_ctx);
         grid
+    }
+
+    fn set_ais(
+        &mut self,
+        ai_white: Option<Box<dyn AIPlayer>>,
+        ai_black: Option<Box<dyn AIPlayer>>,
+    ) {
+        self.ai_white = ai_white;
+        self.ai_black = ai_black;
     }
 
     fn relayout(&mut self, ext_ctx: &mut ExtendedContext) {
@@ -552,7 +586,7 @@ impl Grid {
         &mut self,
         ctx: &mut Context,
         mouse: &MouseState,
-        screen_state: &mut ScreenState,
+        transition: &mut ScreenTransition,
     ) {
         use UIState::*;
         match self.ui_state() {
@@ -567,7 +601,7 @@ impl Grid {
                 }
 
                 if self.main_menu.pressed(mouse.pos) {
-                    *screen_state = ScreenState::TitleScreen;
+                    *transition = ScreenTransition::ToTitleScreen;
                 }
             }
             Promote(coord) => {
