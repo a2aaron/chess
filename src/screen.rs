@@ -547,19 +547,23 @@ impl Grid {
                 Color::Black => &mut self.ai_black,
             };
             if let Some(ai) = ai {
-                let (start, end) = ai.next_move(&self.board, self.board.current_player);
-                self.board.take_turn(start, end).expect(&format!(
-                    "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
-                    self.board.current_player, start, end, self.board
-                ));
-
+                if let std::task::Poll::Ready((start, end)) =
+                    ai.next_move(&self.board, self.board.current_player)
+                {
+                    self.board.take_turn(start, end).expect(&format!(
+                        "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
+                        self.board.current_player, start, end, self.board
+                    ));
+                }
                 // If this move would require the AI to promote a piece, then do it
                 if let Some(coord) = self.board.need_promote() {
                     let piece = ai.next_promote(&self.board);
-                    self.board.promote(coord, piece).expect(&format!(
-                        "{} AI made illegal promote: {:?}\nboard:\n{:?}",
-                        self.board.current_player, piece, self.board
-                    ));
+                    if let std::task::Poll::Ready(piece) = piece {
+                        self.board.promote(coord, piece).expect(&format!(
+                            "{} AI made illegal promote: {:?}\nboard:\n{:?}",
+                            self.board.current_player, piece, self.board
+                        ));
+                    }
                 }
             }
         }

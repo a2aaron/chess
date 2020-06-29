@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::task::Poll;
 
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
@@ -9,32 +10,35 @@ use flamer::flame;
 use crate::board::*;
 
 pub trait AIPlayer: std::fmt::Debug {
-    fn next_move(&mut self, board: &BoardState, player: Color) -> (BoardCoord, BoardCoord);
-    fn next_promote(&mut self, _board: &BoardState) -> PieceType {
-        PieceType::Queen
+    fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<(BoardCoord, BoardCoord)>;
+    fn next_promote(&mut self, _board: &BoardState) -> Poll<PieceType> {
+        Poll::Ready(PieceType::Queen)
     }
 }
+
 #[derive(Debug)]
 pub struct RandomPlayer {}
 
 impl AIPlayer for RandomPlayer {
-    fn next_move(&mut self, board: &BoardState, player: Color) -> (BoardCoord, BoardCoord) {
+    fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<(BoardCoord, BoardCoord)> {
         let moves = board.board.get_all_moves(player);
         if moves.len() == 0 {
             panic!(format!("Expected AI player to have at least one valid move! Board is in {:?} and needs promote: {:?}", board.checkmate, board.need_promote()))
         }
-        *moves.choose(&mut rand::thread_rng()).unwrap()
+        let rand_move = *moves.choose(&mut rand::thread_rng()).unwrap();
+        Poll::Ready(rand_move)
     }
 
-    fn next_promote(&mut self, _board: &BoardState) -> PieceType {
-        *[
+    fn next_promote(&mut self, _board: &BoardState) -> Poll<PieceType> {
+        let choice = *[
             PieceType::Knight,
             PieceType::Bishop,
             PieceType::Rook,
             PieceType::Queen,
         ]
         .choose(&mut rand::thread_rng())
-        .unwrap()
+        .unwrap();
+        Poll::Ready(choice)
     }
 }
 
@@ -42,7 +46,7 @@ impl AIPlayer for RandomPlayer {
 pub struct MinOptPlayer {}
 
 impl AIPlayer for MinOptPlayer {
-    fn next_move(&mut self, board: &BoardState, player: Color) -> (BoardCoord, BoardCoord) {
+    fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<(BoardCoord, BoardCoord)> {
         let my_moves = board.board.get_all_moves(player);
 
         // lower score is better. here we have the score as the number of moves the opponent can make afterwards
@@ -76,7 +80,7 @@ impl AIPlayer for MinOptPlayer {
             best_moves, best_score
         );
         // get the moves with the least number of remaining possibilities
-        *best_moves.choose(&mut rand::thread_rng()).unwrap()
+        Poll::Ready(*best_moves.choose(&mut rand::thread_rng()).unwrap())
     }
 }
 
@@ -86,10 +90,10 @@ pub struct TreeSearchPlayer {
 }
 
 impl AIPlayer for TreeSearchPlayer {
-    fn next_move(&mut self, board: &BoardState, player: Color) -> (BoardCoord, BoardCoord) {
+    fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<(BoardCoord, BoardCoord)> {
         let (score, move_to_make) = self.score(board, 0, player);
         // println!("Best move: {:?} with score {:?}", move_to_make, score);
-        move_to_make
+        Poll::Ready(move_to_make)
     }
 }
 
