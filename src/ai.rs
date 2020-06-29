@@ -83,31 +83,71 @@ impl AIPlayer for MinOptPlayer {
         Poll::Ready(*best_moves.choose(&mut rand::thread_rng()).unwrap())
     }
 }
+use std::sync::mpsc;
 
 #[derive(Debug)]
 pub struct TreeSearchPlayer {
     pub depth: usize,
+    // The thread to run when calculating next move
+    // If none, then no thread is currently running.
+    reciever: Option<mpsc::Receiver<(i32, (BoardCoord, BoardCoord))>>,
 }
 
 impl AIPlayer for TreeSearchPlayer {
     fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<(BoardCoord, BoardCoord)> {
-        let (score, move_to_make) = self.score(board, 0, player);
-        // println!("Best move: {:?} with score {:?}", move_to_make, score);
-        Poll::Ready(move_to_make)
+        match &self.reciever {
+            // Set up the thread if it isn't active
+            None => {
+                let (sender, reciever) = mpsc::channel();
+                // We have to do these clones because the board needs to outlive
+                // the thread and Rust can't prove that board actually does that
+                // (This would cause problems, for example, if there was code in screen.rs
+                // that modified the board while the thread ran!)
+                // Thus, we must work on a copy of the board.
+                let board = board.clone();
+                let max_depth = self.depth;
+                std::thread::spawn(move || {
+                    sender
+                        .send(TreeSearchPlayer::score(&board, max_depth, 0, player))
+                        .unwrap()
+                });
+                self.reciever = Some(reciever);
+                Poll::Pending
+            }
+            // Try asking the thread if it's done yet, and resetting it to None if it is
+            Some(reciever) => match reciever.try_recv() {
+                Ok((score, move_to_make)) => {
+                    self.reciever = None;
+                    println!("Best move: {:?} with score {:?}", move_to_make, score);
+                    Poll::Ready(move_to_make)
+                }
+                Err(mpsc::TryRecvError::Empty) => Poll::Pending,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("reciever machine broke (sender closed channel)")
+                }
+            },
+        }
     }
 }
 
 impl TreeSearchPlayer {
+    pub fn new(depth: usize) -> TreeSearchPlayer {
+        TreeSearchPlayer {
+            depth,
+            reciever: None,
+        }
+    }
+
     #[cfg_attr(feature = "perf", flame)]
     fn score(
-        &self,
         position: &BoardState,
+        max_depth: usize,
         current_depth: usize,
         player: Color,
     ) -> (i32, (BoardCoord, BoardCoord)) {
         // Explore only 2 moves ahead
-        if current_depth >= self.depth || position.game_over() {
-            let score = self.score_leaf(current_depth, position, player);
+        if current_depth >= max_depth || position.game_over() {
+            let score = TreeSearchPlayer::score_leaf(current_depth, position, player);
             // println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
             return (score, (BoardCoord(-2, -2), BoardCoord(-2, -2)));
         }
@@ -131,7 +171,8 @@ impl TreeSearchPlayer {
                 "Expected {:?} -> {:?} to be a legal move!",
                 start, end
             ));
-            let (score, _) = self.score(&next_position, current_depth + 1, player);
+            let (score, _) =
+                TreeSearchPlayer::score(&next_position, max_depth, current_depth + 1, player);
 
             if my_turn {
                 // is it is our turn, pick our best move
@@ -162,7 +203,7 @@ impl TreeSearchPlayer {
     }
 
     #[cfg_attr(feature = "perf", flame)]
-    fn score_leaf(&self, current_depth: usize, position: &BoardState, player: Color) -> i32 {
+    fn score_leaf(current_depth: usize, position: &BoardState, player: Color) -> i32 {
         let my_turn = position.current_player == player;
         let bonus = match position.checkmate {
             CheckmateState::Normal => 0,
