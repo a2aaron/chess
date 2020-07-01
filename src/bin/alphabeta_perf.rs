@@ -25,7 +25,7 @@ fn main() {
     let mut board = board::BoardState::new(board.clone());
     board.current_player = board::Color::Black;
 
-    let mut alphabeta_ai = ai::TreeSearchPlayer::new(4);
+    let mut alphabeta_ai = ai::TreeSearchPlayer::new(5);
     let start: board::BoardCoord;
     let end: board::BoardCoord;
     loop {

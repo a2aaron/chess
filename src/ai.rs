@@ -215,7 +215,9 @@ impl TreeSearch {
             // TODO: This really should get a real analysis, but for now, assuming the
             // player or ourself always promos to queen is an ok compromise.
             if let Some(coord) = next_position.need_promote() {
-                next_position.promote(coord, PieceType::Queen);
+                next_position
+                    .promote(coord, PieceType::Queen)
+                    .expect("Expected promotion to be legal!");
             }
 
             let (score, _, _, _) =
@@ -275,45 +277,171 @@ impl TreeSearch {
 
     #[cfg_attr(feature = "perf", flame)]
     fn score_leaf(&mut self, current_depth: usize, position: &BoardState, player: Color) -> i32 {
+        // Scoring function adapted from https://www.chessprogramming.org/Simplified_Evaluation_Function
+        // The idea here is to make the AI care more about developing its pieces
+        // This is achieve via "position tables", which award bonuses or penalities for
+        // placing certain pieces on certain squares
+        // For example, the Pawn position table encourages moving the center pawns,
+        // so that pieces may be developed, but discourages moving the side pawns,
+        // so that castling may be achieved.
+        #[rustfmt::skip]
+        const PAWN_POSITION_TABLE: [[i32; 8]; 8] = [
+            [ 0,  0,  0,  0,  0,  0,  0,  0],
+            [50, 50, 50, 50, 50, 50, 50, 50],
+            [10, 10, 20, 30, 30, 20, 10, 10],
+            [ 5,  5, 10, 25, 25, 10,  5,  5],
+            [ 0,  0,  0, 20, 20,  0,  0,  0],
+            [ 5, -5,-10,  0,  0,-10, -5,  5],
+            [ 5, 10, 10,-20,-20, 10, 10,  5],
+            [ 0,  0,  0,  0,  0,  0,  0,  0]
+        ];
+        // Encourage the knight to be near the center, to maximize the number of
+        // squares it can control.
+        #[rustfmt::skip]
+        const KNIGHT_POSITION_TABLE: [[i32; 8]; 8] = [
+            [-50,-40,-30,-30,-30,-30,-40,-50],
+            [-40,-20,  0,  0,  0,  0,-20,-40],
+            [-30,  0, 10, 15, 15, 10,  0,-30],
+            [-30,  5, 15, 20, 20, 15,  5,-30],
+            [-30,  0, 15, 20, 20, 15,  0,-30],
+            [-30,  5, 10, 15, 15, 10,  5,-30],
+            [-40,-20,  0,  5,  5,  0,-20,-40],
+            [-50,-40,-30,-30,-30,-30,-40,-50],
+        ];
+        // Encourage the bishop to avoid the sides
+        #[rustfmt::skip]
+        const BISHOP_POSITION_TABLE: [[i32; 8]; 8] = [
+            [-20,-10,-10,-10,-10,-10,-10,-20],
+            [-10,  0,  0,  0,  0,  0,  0,-10],
+            [-10,  0,  5, 10, 10,  5,  0,-10],
+            [-10,  5,  5, 10, 10,  5,  5,-10],
+            [-10,  0, 10, 10, 10, 10,  0,-10],
+            [-10, 10, 10, 10, 10, 10, 10,-10],
+            [-10,  5,  0,  0,  0,  0,  5,-10],
+            [-20,-10,-10,-10,-10,-10,-10,-20],
+        ];
+        // Encourage the rook to either defend the king, or to threaten the back
+        // ranks for checkmate
+        #[rustfmt::skip]
+        const ROOK_POSITION_TABLE: [[i32; 8]; 8] = [
+            [ 0,  0,  0,  0,  0,  0,  0,  0],
+            [ 5, 10, 10, 10, 10, 10, 10,  5],
+            [-5,  0,  0,  0,  0,  0,  0, -5],
+            [-5,  0,  0,  0,  0,  0,  0, -5],
+            [-5,  0,  0,  0,  0,  0,  0, -5],
+            [-5,  0,  0,  0,  0,  0,  0, -5],
+            [-5,  0,  0,  0,  0,  0,  0, -5],
+            [ 0,  0,  0,  5,  5,  0,  0,  0]
+        ];
+        // Encourage the queen to avoid the sides and play around the center
+        #[rustfmt::skip]
+        const QUEEN_POSITION_TABLE: [[i32; 8]; 8] = [
+            [-20,-10,-10, -5, -5,-10,-10,-20],
+            [-10,  0,  0,  0,  0,  0,  0,-10],
+            [-10,  0,  5,  5,  5,  5,  0,-10],
+            [ -5,  0,  5,  5,  5,  5,  0, -5],
+            [  0,  0,  5,  5,  5,  5,  0, -5],
+            [-10,  5,  5,  5,  5,  5,  0,-10],
+            [-10,  0,  5,  0,  0,  0,  0,-10],
+            [-20,-10,-10, -5, -5,-10,-10,-20]
+        ];
+        // Encourage the king to castle and to hide away in the early game.
+        #[rustfmt::skip]
+        const EARLY_KING_POSITION_TABLE: [[i32; 8]; 8] = [
+            [-30,-40,-40,-50,-50,-40,-40,-30],
+            [-30,-40,-40,-50,-50,-40,-40,-30],
+            [-30,-40,-40,-50,-50,-40,-40,-30],
+            [-30,-40,-40,-50,-50,-40,-40,-30],
+            [-20,-30,-30,-40,-40,-30,-30,-20],
+            [-10,-20,-20,-20,-20,-20,-20,-10],
+            [ 20, 20,  0,  0,  0,  0, 20, 20],
+            [ 20, 30, 10,  0,  0, 10, 30, 20]
+        ];
+        // Encourage the king to go out and fight near the end game.
+        #[rustfmt::skip]
+        let LATE_KING_POSITION_TABLE = [
+            [-50,-40,-30,-20,-20,-30,-40,-50],
+            [-30,-20,-10,  0,  0,-10,-20,-30],
+            [-30,-10, 20, 30, 30, 20,-10,-30],
+            [-30,-10, 30, 40, 40, 30,-10,-30],
+            [-30,-10, 30, 40, 40, 30,-10,-30],
+            [-30,-10, 20, 30, 30, 20,-10,-30],
+            [-30,-30,  0,  0,  0,  0,-30,-30],
+            [-50,-30,-30,-30,-30,-30,-30,-50]
+        ];
+
         let my_turn = position.current_player == player;
+        // A bonus is applied when possible to make the AI prefer checkmate
         let bonus = match position.checkmate {
             CheckmateState::Normal => 0,
             CheckmateState::Check => {
                 if my_turn {
-                    -4
+                    -400
                 } else {
-                    4
+                    400
                 }
             }
             CheckmateState::Checkmate => {
                 if my_turn {
-                    -999
+                    return -999_999_999;
                 } else {
-                    999 - current_depth as i32
+                    // Subtracting the current_depth makes the AI prefer shorter
+                    // checkmates over longer ones. We also immediately return because
+                    // there is no reason to find the position scores since checkmate
+                    // is the best possible thing to do.
+                    return 999_999_999 - current_depth as i32;
                 }
             }
-            CheckmateState::InsuffientMaterial | CheckmateState::Stalemate => -2,
+            // A stalemate is draw, and so we try to make the bot play to win when
+            // possible.
+            CheckmateState::InsuffientMaterial | CheckmateState::Stalemate => -200,
         };
 
-        let my_pieces = position.board.get_pieces_vec(player);
-        let their_pieces = position.board.get_pieces_vec(player.opposite());
+        let mut my_piece_score = 0;
+        let mut my_position_score = 0;
+        let mut their_piece_score = 0;
+        let mut their_position_score = 0;
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord(i, j);
+                // offsets into the position tables
+                // we flip them vertically when playing as black because the
+                // tables are constructed for white's side
+                let (offset_x, offset_y) = match player {
+                    Color::White => (i as usize, j as usize),
+                    Color::Black => (i as usize, 7 - j as usize),
+                };
 
-        bonus + score_pieces(my_pieces) - score_pieces(their_pieces)
-    }
-}
+                let tile = position.get(coord);
 
-fn score_pieces(pieces: Vec<Piece>) -> i32 {
-    use PieceType::*;
-    let mut score = 0;
-    for piece in pieces {
-        score += match piece.piece {
-            Pawn(_) => 1,
-            Knight => 3,
-            Bishop => 3,
-            Rook => 5,
-            Queen => 9,
-            King => 0, // Ignore the king
-        };
+                if tile.0.is_none() {
+                    continue;
+                }
+                let piece = tile.0.unwrap();
+                use PieceType::*;
+                // Values here are also taken from https://www.chessprogramming.org/Simplified_Evaluation_Function
+                // It seems that this causes the bot to value the bishops a bit more than
+                // the knights.
+                let (piece_score, position_score) = match piece.piece {
+                    Pawn(_) => (100, PAWN_POSITION_TABLE[offset_x][offset_y]),
+                    Knight => (320, KNIGHT_POSITION_TABLE[offset_x][offset_y]),
+                    Bishop => (330, BISHOP_POSITION_TABLE[offset_x][offset_y]),
+                    Rook => (500, ROOK_POSITION_TABLE[offset_x][offset_y]),
+                    Queen => (900, QUEEN_POSITION_TABLE[offset_x][offset_y]),
+                    // TODO use the late position table
+                    King => (20000, EARLY_KING_POSITION_TABLE[offset_x][offset_y]),
+                };
+
+                let my_piece = piece.color == player;
+                if my_piece {
+                    my_piece_score += piece_score;
+                    my_position_score += position_score;
+                } else {
+                    their_piece_score += piece_score;
+                    their_position_score += position_score;
+                }
+            }
+        }
+        my_piece_score + my_position_score - (their_piece_score + their_position_score) + bonus
     }
-    score
 }

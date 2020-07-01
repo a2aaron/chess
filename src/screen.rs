@@ -496,11 +496,11 @@ impl Grid {
             ".. .. .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
             ".. .. .. .. .. .. .. ..",
-            "BP BP BP .. .. .. .. ..",
+            "BR .. BR .. .. .. .. ..",
             ".. BK .. .. .. .. .. ..",
         ];
         let board = Board::from_string_vec(board);
-        // let board = Board::default();
+        let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
     }
