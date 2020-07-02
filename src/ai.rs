@@ -98,7 +98,7 @@ pub struct TreeSearchPlayer {
 struct TreeSearch {
     max_depth: usize,
     // Unfortunately, AIs can not dance, so this is always empty
-    killer_moves: Vec<Move>,
+    principal_variation: Vec<Move>,
     total_branches: usize,
     branches_searched: usize,
 }
@@ -130,7 +130,7 @@ impl AIPlayer for TreeSearchPlayer {
                     self.reciever = None;
                     self.state = state;
                     println!("Best move: {:?} with score {:?}", move_to_make, score);
-                    println!("Killer {:?}", self.state);
+                    println!("principal {:?}", self.state);
                     println!(
                         "Searched {} of {} branches",
                         self.state.branches_searched, self.state.total_branches
@@ -152,7 +152,7 @@ impl TreeSearchPlayer {
         TreeSearchPlayer {
             state: TreeSearch {
                 max_depth,
-                killer_moves: vec![(BoardCoord(-1, -1), BoardCoord(-1, -1)); 2 * max_depth],
+                principal_variation: vec![(BoardCoord(-1, -1), BoardCoord(-1, -1)); max_depth],
                 total_branches: 0,
                 branches_searched: 0,
             },
@@ -216,23 +216,15 @@ impl TreeSearch {
 
         let my_turn = player == position.current_player;
         let mut best_score = if my_turn { i32::MIN } else { i32::MAX };
-        let mut best_move = (BoardCoord(-1, -1), BoardCoord(-1, -1));
-        let mut second_best_move = (BoardCoord(-1, -1), BoardCoord(-1, -1));
+        let mut best_move = self.principal_variation[current_depth];
 
-        // First, try checking the killer moves, to get a better value for alpha and beta
-        let killer_move = self.killer_moves[current_depth * 2];
-        let killer_move2 = self.killer_moves[(current_depth * 2) + 1];
-
-        if moves.len() > 1 {
-            if let Some(i) = moves.iter().position(|&the_move| the_move == killer_move) {
-                moves.swap(0, i);
-                // do_killer = true;
-            }
-
-            if let Some(i) = moves.iter().position(|&the_move| the_move == killer_move2) {
-                moves.swap(1, i);
-                // do_killer2 = true;
-            }
+        // First, try checking the principal moves, to get a better value for alpha and beta
+        let principal_move = self.principal_variation[current_depth];
+        if let Some(i) = moves
+            .iter()
+            .position(|&the_move| the_move == principal_move)
+        {
+            moves.swap(0, i);
         }
 
         // Then, for each of our moves, try making it and see which one has the best score
@@ -259,7 +251,6 @@ impl TreeSearch {
                 if best_score < score {
                     alpha = alpha.max(score);
                     best_score = best_score.max(score);
-                    second_best_move = best_move;
                     best_move = (start, end);
 
                     if alpha >= beta {
@@ -274,8 +265,6 @@ impl TreeSearch {
                 if best_score > score {
                     beta = beta.min(score);
                     best_score = best_score.min(score);
-
-                    second_best_move = best_move;
                     best_move = (start, end);
 
                     if alpha >= beta {
@@ -290,13 +279,12 @@ impl TreeSearch {
             debug_assert!(best_move != (BoardCoord(-1, -1), BoardCoord(-1, -1)));
         }
 
-        // Add the best moves found so far to the killer move list
-        self.killer_moves[current_depth * 2] = best_move;
-        self.killer_moves[(current_depth * 2) + 1] = second_best_move;
+        // Add the best moves found so far to the principal move list
+        self.principal_variation[current_depth] = best_move;
 
         self.branches_searched += i;
         // println!(
-        //     "{} Killer moves: {:?} {:?} (at depth: {})",
+        //     "{} principal moves: {:?} {:?} (at depth: {})",
         //     "\t".repeat(current_depth),
         //     best_move,
         //     second_best_move,
