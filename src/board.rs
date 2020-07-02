@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 #[cfg(feature = "perf")]
@@ -732,78 +731,6 @@ impl Board {
         true
     }
 
-    fn piece_threatens(&self, piece: Piece, coord: BoardCoord, target: BoardCoord) -> bool {
-        use PieceType::*;
-        debug_assert!(coord != target);
-
-        // This is a closure. || -> bool indicates that it returns bool and takes no parameters
-        // (Technically, you can elide the "-> bool" here, which I do in rook_check).
-        let bishop_check =
-            || -> bool {
-                let delta_x = target.0 - coord.0;
-                let delta_y = target.1 - coord.1;
-                let on_diagonal = delta_x.abs() == delta_y.abs();
-
-                if !on_diagonal {
-                    return false;
-                }
-
-                let delta = delta_x.abs();
-                match (delta_x > 0, delta_y > 0) {
-                    // Diagonally right up /
-                    (true, true) => (1..delta)
-                        .all(|i| self.get(BoardCoord(coord.0 + i, coord.1 + i)).0.is_none()),
-                    // Diagonally right down \
-                    (true, false) => (1..delta)
-                        .all(|i| self.get(BoardCoord(coord.0 + i, coord.1 - i)).0.is_none()),
-                    // Diagonally left up \
-                    (false, true) => (1..delta)
-                        .all(|i| self.get(BoardCoord(coord.0 - i, coord.1 + i)).0.is_none()),
-                    // Diagonally left down /
-                    (false, false) => (1..delta)
-                        .all(|i| self.get(BoardCoord(coord.0 - i, coord.1 - i)).0.is_none()),
-                }
-            };
-
-        let rook_check = || {
-            if target.0 == coord.0 {
-                let min = target.1.min(coord.1);
-                let max = target.1.max(coord.1);
-                // We do + 1 because this is not inclusive at either end
-                // Returns true so long as all interveening tiles are empty
-                ((min + 1)..max).all(|y| self.get(BoardCoord(target.0, y)).0.is_none())
-            } else if target.1 == coord.1 {
-                let min = target.0.min(coord.0);
-                let max = target.0.max(coord.0);
-                // We do + 1 because this is not inclusive at either end
-                // Returns true so long as all interveening tiles are empty
-                ((min + 1)..max).all(|x| self.get(BoardCoord(x, target.1)).0.is_none())
-            } else {
-                false
-            }
-        };
-
-        match piece.piece {
-            Pawn(_) => {
-                (target.0 == coord.0 + 1 || target.0 == coord.0 - 1)
-                    && (target.1 == coord.1 + piece.color.direction())
-            }
-            Knight => {
-                let x_abs = (target.0 - coord.0).abs();
-                let y_abs = (target.1 - coord.1).abs();
-                (x_abs == 2 && y_abs == 1) || (x_abs == 1 && y_abs == 2)
-            }
-            King => {
-                let x_abs = (target.0 - coord.0).abs();
-                let y_abs = (target.1 - coord.1).abs();
-                x_abs <= 1 && y_abs <= 1
-            }
-            Rook => rook_check(),
-            Bishop => bishop_check(),
-            Queen => rook_check() || bishop_check(),
-        }
-    }
-
     /// Returns if the player is currently in checkmate
     #[cfg_attr(feature = "perf", flame)]
     fn checkmate_state(&self, player: Color) -> CheckmateState {
@@ -987,25 +914,6 @@ impl Board {
             }
         }
         None
-    }
-
-    pub fn get_pieces_vec(&self, color: Color) -> Vec<Piece> {
-        let mut vec = vec![];
-        for i in ROWS {
-            for j in COLS {
-                let coord = BoardCoord(i, j);
-                let tile = self.get(coord).0;
-                match tile {
-                    None => (),
-                    Some(piece) => {
-                        if piece.color == color {
-                            vec.push(piece)
-                        }
-                    }
-                }
-            }
-        }
-        vec
     }
 }
 
@@ -1404,32 +1312,12 @@ impl Tile {
         }
     }
 
-    /// Returns true if the Tile is actually a peice that has moved
-    fn is_moved_piece(&self) -> bool {
-        match self.0 {
-            None => false,
-            Some(piece) => piece.has_moved,
-        }
-    }
-
     /// Returns true if the `Tile` actually has a piece and
     /// `color` matches the color of the piece.
     pub fn is_color(&self, color: Color) -> bool {
         match self.0 {
             None => false,
             Some(piece) => piece.color == color,
-        }
-    }
-
-    /// Returns true if the `Tile` actually has a piece and
-    /// `piece` matches the `PieceType` of the piece. Note: the `just_lunged`
-    /// flag on the Pawn piecetype is ignored.
-    fn is_type(&self, piece_type: PieceType) -> bool {
-        match self.0 {
-            None => false,
-            Some(piece) => {
-                std::mem::discriminant(&piece.piece) == std::mem::discriminant(&piece_type)
-            }
         }
     }
 
@@ -1855,9 +1743,6 @@ mod tests {
     // CASTLING TESTS
 
     const WHITE_QUEENSIDE_ROOK: BoardCoord = BoardCoord(0, 0);
-    const WHITE_KINGSIDE_ROOK: BoardCoord = BoardCoord(7, 0);
-    const BLACK_QUEENSIDE_ROOK: BoardCoord = BoardCoord(0, 7);
-    const BLACK_KINGSIDE_ROOK: BoardCoord = BoardCoord(7, 7);
 
     #[test]
     fn test_castle_simple() {

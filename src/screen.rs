@@ -18,23 +18,27 @@ const DEBUG_LAYOUT: bool = false;
 const DEFAULT_SCALE: f32 = 20.0;
 const DONTCARE: f32 = -999.0;
 
-const RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 1.0);
-const YELLOW: graphics::Color = graphics::Color::new(1.0, 1.0, 0.0, 1.0);
-const GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 1.0);
-const CYAN: graphics::Color = graphics::Color::new(0.0, 1.0, 1.0, 1.0);
-const BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 1.0);
-const PURPLE: graphics::Color = graphics::Color::new(1.0, 0.0, 1.0, 1.0);
-const WHITE: graphics::Color = graphics::Color::new(1.0, 1.0, 1.0, 1.0);
-const LIGHT_GREY: graphics::Color = graphics::Color::new(0.5, 0.5, 0.5, 1.0);
-const DARK_GREY: graphics::Color = graphics::Color::new(0.25, 0.25, 0.25, 1.0);
-const BLACK: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 1.0);
-const TRANSPARENT: graphics::Color = graphics::Color::new(0.0, 0.0, 0.0, 0.0);
-const TRANS_RED: graphics::Color = graphics::Color::new(1.0, 0.0, 0.0, 0.5);
-const TRANS_YELLOW: graphics::Color = graphics::Color::new(1.0, 1.0, 0.0, 0.5);
-const TRANS_GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 0.5);
-const TRANS_CYAN: graphics::Color = graphics::Color::new(0.0, 1.0, 1.0, 0.5);
-const TRANS_BLUE: graphics::Color = graphics::Color::new(0.0, 0.0, 1.0, 0.5);
-const TRANS_PURPLE: graphics::Color = graphics::Color::new(1.0, 0.0, 1.0, 0.5);
+#[allow(unused)]
+pub mod color {
+    use ggez::graphics::Color;
+    pub const RED: Color = Color::new(1.0, 0.0, 0.0, 1.0);
+    pub const YELLOW: Color = Color::new(1.0, 1.0, 0.0, 1.0);
+    pub const GREEN: Color = Color::new(0.0, 1.0, 0.0, 1.0);
+    pub const CYAN: Color = Color::new(0.0, 1.0, 1.0, 1.0);
+    pub const BLUE: Color = Color::new(0.0, 0.0, 1.0, 1.0);
+    pub const PURPLE: Color = Color::new(1.0, 0.0, 1.0, 1.0);
+    pub const WHITE: Color = Color::new(1.0, 1.0, 1.0, 1.0);
+    pub const LIGHT_GREY: Color = Color::new(0.5, 0.5, 0.5, 1.0);
+    pub const DARK_GREY: Color = Color::new(0.25, 0.25, 0.25, 1.0);
+    pub const BLACK: Color = Color::new(0.0, 0.0, 0.0, 1.0);
+    pub const TRANSPARENT: Color = Color::new(0.0, 0.0, 0.0, 0.0);
+    pub const TRANS_RED: Color = Color::new(1.0, 0.0, 0.0, 0.5);
+    pub const TRANS_YELLOW: Color = Color::new(1.0, 1.0, 0.0, 0.5);
+    pub const TRANS_GREEN: Color = Color::new(0.0, 1.0, 0.0, 0.5);
+    pub const TRANS_CYAN: Color = Color::new(0.0, 1.0, 1.0, 0.5);
+    pub const TRANS_BLUE: Color = Color::new(0.0, 0.0, 1.0, 0.5);
+    pub const TRANS_PURPLE: Color = Color::new(1.0, 0.0, 1.0, 0.5);
+}
 
 #[derive(Debug)]
 pub struct Game {
@@ -108,7 +112,13 @@ impl EventHandler for Game {
         // FPS counter
         let text = format!("{}", ggez::timer::fps(ctx));
         let location = na::Point2::new(100.0, 500.0);
-        draw_text(ctx, text, self.ext_ctx.font, DEFAULT_SCALE, (location, RED))?;
+        draw_text(
+            ctx,
+            text,
+            self.ext_ctx.font,
+            DEFAULT_SCALE,
+            (location, color::RED),
+        )?;
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
@@ -268,10 +278,10 @@ impl TitleScreen {
         }
     }
 
-    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
-        self.human_game.draw(ctx, font)?;
-        self.ai_game.draw(ctx, font)?;
-        self.quit_game.draw(ctx, font)?;
+    fn draw(&self, ctx: &mut Context, _font: graphics::Font) -> GameResult<()> {
+        self.human_game.draw(ctx)?;
+        self.ai_game.draw(ctx)?;
+        self.quit_game.draw(ctx)?;
         self.title.draw(ctx)?;
 
         Ok(())
@@ -371,7 +381,7 @@ impl Grid {
         self.ai_black = ai_black;
     }
 
-    fn relayout(&mut self, ext_ctx: &mut ExtendedContext) {
+    fn relayout(&mut self, _ext_ctx: &mut ExtendedContext) {
         let off_x = 10.0;
         let off_y = 10.0;
 
@@ -453,55 +463,21 @@ impl Grid {
 
         full_ui.set_position_relative(mint::Vector2 { x: 10.0, y: 10.0 });
 
-        // DEBUG
-        if DEBUG_LAYOUT {
-            ext_ctx.debug_render.clear();
-            ext_ctx.debug_render.push((grid, TRANS_BLUE));
-            ext_ctx
-                .debug_render
-                .push((sidebar.bounding_box(), TRANS_YELLOW));
-            ext_ctx
-                .debug_render
-                .push((padding_side.bounding_box(), WHITE));
-            ext_ctx
-                .debug_render
-                .push((menu_buttons.bounding_box(), TRANS_RED));
-            ext_ctx.debug_render.push((padding1.bounding_box(), RED));
-            ext_ctx.debug_render.push((padding2.bounding_box(), BLUE));
-            ext_ctx.debug_render.push((padding3.bounding_box(), GREEN));
-            ext_ctx.debug_render.push((padding4.bounding_box(), YELLOW));
-            ext_ctx
-                .debug_render
-                .push((button_stack.bounding_box(), TRANS_PURPLE));
-            ext_ctx
-                .debug_render
-                .push((self.status.bounding_box, TRANS_CYAN));
-            ext_ctx
-                .debug_render
-                .push((fake_stack.bounding_box(), TRANS_GREEN));
-            ext_ctx
-                .debug_render
-                .push((self.dead_black.bounding_box(), TRANS_BLUE));
-            ext_ctx
-                .debug_render
-                .push((self.dead_white.bounding_box(), TRANS_BLUE));
-        }
-
         self.offset = na::Vector2::new(grid.x, grid.y);
     }
 
     fn new_game(&mut self) {
-        let board = vec![
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. WK .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            ".. .. .. .. .. .. .. ..",
-            "BR .. BR .. .. .. .. ..",
-            ".. BK .. .. .. .. .. ..",
-        ];
-        let board = Board::from_string_vec(board);
+        // let board = vec![
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. WK .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     ".. .. .. .. .. .. .. ..",
+        //     "BR .. BR .. .. .. .. ..",
+        //     ".. BK .. .. .. .. .. ..",
+        // ];
+        // let board = Board::from_string_vec(board);
         let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
@@ -626,7 +602,7 @@ impl Grid {
     /// Called on mouse up events
     /// Try to move the piece at the location of the last mouse down press to where the
     /// mouse currently is. If a drag isn't being done, this function does nothing.
-    fn move_piece(&mut self, ctx: &mut Context, mouse: &MouseState) {
+    fn move_piece(&mut self, _ctx: &mut Context, mouse: &MouseState) {
         let dragging = self.to_grid_coord(mouse.last_down.unwrap());
         let drop_loc = self.to_grid_coord(mouse.pos);
         if drop_loc.is_err() || dragging.is_err() {
@@ -653,12 +629,12 @@ impl Grid {
         match self.ui_state() {
             Normal => (),
             GameOver => {
-                self.restart.draw(ctx, font)?;
-                self.main_menu.draw(ctx, font)?;
+                self.restart.draw(ctx)?;
+                self.main_menu.draw(ctx)?;
             }
             Promote(_) => {
                 for (button, _) in &self.promote_buttons {
-                    button.draw(ctx, font)?;
+                    button.draw(ctx)?;
                 }
             }
         }
@@ -683,10 +659,10 @@ impl Grid {
                 let location = self.to_screen_coord(BoardCoord(x, y))
                     + na::Vector2::new(self.square_size * 0.42, self.square_size * 0.25);
                 let color = match tile.0 {
-                    None => TRANSPARENT,
+                    None => color::TRANSPARENT,
                     Some(piece) => match piece.color {
-                        Color::Black => BLACK,
-                        Color::White => WHITE,
+                        Color::Black => color::BLACK,
+                        Color::White => color::WHITE,
                     },
                 };
                 graphics::draw(ctx, text, (location, color))?;
@@ -703,7 +679,7 @@ impl Grid {
 
         let mut mesh = graphics::MeshBuilder::new();
         let solid_rect = Rect::new(0.0, 0.0, self.square_size, self.square_size);
-        mesh.rectangle(fill, solid_rect, RED);
+        mesh.rectangle(fill, solid_rect, color::RED);
         let solid_rect = mesh.build(ctx).unwrap();
 
         // TODO: this is an awful idea, instead expose a field similar to self.board.checkmate
@@ -728,13 +704,13 @@ impl Grid {
             self.square_size - stroke_width,
         );
         // don't actually care about the color here
-        mesh.rectangle(stroke, hollow_rect, WHITE);
+        mesh.rectangle(stroke, hollow_rect, color::WHITE);
         let hollow_rect = mesh.build(ctx).unwrap();
 
         // Color the potential locations the piece may be moved to in blue
         for coord in &self.drop_locations {
             let offset: na::Point2<f32> = self.to_screen_coord(*coord) + self.offset;
-            graphics::draw(ctx, &hollow_rect, (offset, BLUE))?;
+            graphics::draw(ctx, &hollow_rect, (offset, color::BLUE))?;
         }
 
         // Color the currently highlighted square red if it is the player's piece or if the player is dragging it
@@ -743,9 +719,9 @@ impl Grid {
             let same_color = self.board.get(coord).is_color(self.board.current_player);
             let is_dragging = mouse.dragging.is_some();
             let color = if same_color || is_dragging {
-                RED
+                color::RED
             } else {
-                TRANSPARENT
+                color::TRANSPARENT
             };
             let offset: na::Point2<f32> = self.to_screen_coord(coord) + self.offset;
             graphics::draw(ctx, &hollow_rect, (offset, color))?;
@@ -756,7 +732,7 @@ impl Grid {
             let dragging = self.to_grid_coord(dragging);
             if let Ok(coord) = dragging {
                 let offset: na::Point2<f32> = self.to_screen_coord(coord) + self.offset;
-                graphics::draw(ctx, &hollow_rect, (offset, GREEN))?;
+                graphics::draw(ctx, &hollow_rect, (offset, color::GREEN))?;
             }
         }
 
@@ -776,9 +752,9 @@ impl Grid {
                     square_size,
                 );
                 if (i + j) % 2 == 1 {
-                    mesh.rectangle(fill, rect, LIGHT_GREY);
+                    mesh.rectangle(fill, rect, color::LIGHT_GREY);
                 } else {
-                    mesh.rectangle(fill, rect, DARK_GREY);
+                    mesh.rectangle(fill, rect, color::DARK_GREY);
                 }
             }
         }
@@ -836,17 +812,6 @@ pub struct Button {
 }
 
 impl Button {
-    fn new(hitbox: Rect, text: graphics::Text) -> Button {
-        Button {
-            hitbox,
-            state: ButtonState::Idle,
-            text: TextBox {
-                bounding_box: hitbox,
-                text,
-            },
-        }
-    }
-
     /// Return a button whose size is at least large enough to fit both min_hitbox
     /// and the text. If the text would be larger than min_hitbox, it is centered on top of
     /// min_hitbox.
@@ -882,14 +847,14 @@ impl Button {
         };
     }
 
-    fn draw(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         use ButtonState::*;
 
         let fill: graphics::DrawMode = graphics::DrawMode::fill();
         let stroke_width = 3.0;
         let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
 
-        let outer_color = WHITE;
+        let outer_color = color::WHITE;
         let inner_color = match self.state {
             Idle => graphics::Color::from_rgb_u32(0x13ff00),
             Hover => graphics::Color::from_rgb_u32(0x0ebf00),
@@ -915,7 +880,7 @@ impl Button {
 
         graphics::draw(ctx, &button, (dest,))?;
 
-        self.text.draw_with_color(ctx, BLACK)?;
+        self.text.draw_with_color(ctx, color::BLACK)?;
         Ok(())
     }
 }
@@ -954,7 +919,7 @@ impl TextBox {
                 ctx,
                 graphics::DrawMode::fill(),
                 self.bounding_box,
-                TRANS_CYAN,
+                color::TRANS_CYAN,
             )
             .unwrap();
             graphics::draw(ctx, rect, DrawParam::default())?;
@@ -973,7 +938,7 @@ impl TextBox {
     }
 
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
-        self.draw_with_color(ctx, RED)
+        self.draw_with_color(ctx, color::RED)
     }
 }
 
@@ -995,25 +960,6 @@ where
     let mut text = graphics::Text::new(text);
     text.set_font(font, graphics::Scale::uniform(scale));
     text
-}
-
-fn draw_centered<D, S>(ctx: &mut Context, mesh: &D, params: S) -> GameResult<()>
-where
-    S: Into<DrawParam>,
-    D: graphics::Drawable,
-{
-    let params: DrawParam = params.into();
-
-    // Find the point such that the mesh will be centered on `param.dest`
-    let dimensions = mesh.dimensions(ctx).unwrap();
-    let (width, height) = (dimensions.w, dimensions.h);
-    let location = mint::Point2 {
-        x: params.dest.x - width as f32 / 2.0,
-        y: params.dest.y - height as f32 / 2.0,
-    };
-    let params = params.dest(location);
-
-    graphics::draw(ctx, mesh, params)
 }
 
 // Draw some text using the font, scale, and parameters specified.

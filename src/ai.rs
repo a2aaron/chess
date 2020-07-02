@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::task::Poll;
 
 use rand::seq::SliceRandom;
-use rand::{thread_rng, Rng};
 
 #[cfg(feature = "perf")]
 use flamer::flame;
@@ -378,7 +377,9 @@ impl TreeSearch {
         ];
         // Encourage the king to go out and fight near the end game.
         #[rustfmt::skip]
-        let LATE_KING_POSITION_TABLE = [
+        // TODO: Use this table for endgame
+        #[allow(unused)]
+        const LATE_KING_POSITION_TABLE: [[i32; 8]; 8] = [
             [-50,-40,-30,-20,-20,-30,-40,-50],
             [-30,-20,-10,  0,  0,-10,-20,-30],
             [-30,-10, 20, 30, 30, 20,-10,-30],
