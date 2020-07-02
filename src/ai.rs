@@ -181,6 +181,25 @@ impl TreeSearch {
         }
 
         let mut moves = position.board.get_all_moves(position.current_player);
+        // See also: https://www.chessprogramming.org/MVV-LVA
+        // We sort here to make the AI check the most "useful" moves first. This
+        // helps in causing an earlier alpha or beta cutoff, thereby reducing the
+        // number of branches we have to check.
+        // We first check all the captures. We sort the captures by the "most valuable victim"
+        // and then by the "least valuable attacker". This is nice because it
+        // lets us consider the most "useful" moves first--ie: use a pawn to defend an
+        // attacking piece, or try and capture a high-value attacker first.
+        // Note that sort_by_key will sort with smallest values first.const
+        // For normal moves, we start with the most valuable pieces (queen, rook, etc)
+        moves.sort_by_key(|&(start, end)| {
+            let attacker = position.get(start);
+            let victim = position.get(end);
+            match &victim.0 {
+                None => 10 - value(attacker),
+                Some(_) => -(10 * value(victim) - value(attacker)),
+            }
+        });
+
         self.total_branches += moves.len();
 
         let my_turn = player == position.current_player;
@@ -443,5 +462,20 @@ impl TreeSearch {
             }
         }
         my_piece_score + my_position_score - (their_piece_score + their_position_score) + bonus
+    }
+}
+
+fn value(tile: &Tile) -> i32 {
+    use PieceType::*;
+    match tile.0 {
+        None => -1,
+        Some(piece) => match piece.piece {
+            Pawn(_) => 1,
+            Knight => 2,
+            Bishop => 2,
+            Rook => 3,
+            Queen => 4,
+            King => 0,
+        },
     }
 }

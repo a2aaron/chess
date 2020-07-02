@@ -257,8 +257,10 @@ impl TitleScreen {
         if self.human_game.pressed(mouse_pos) {
             *screen_transition = ScreenTransition::StartGame(None, None);
         } else if self.ai_game.pressed(mouse_pos) {
-            *screen_transition =
-                ScreenTransition::StartGame(None, Some(Box::new(TreeSearchPlayer::new(6))));
+            *screen_transition = ScreenTransition::StartGame(
+                Some(Box::new(TreeSearchPlayer::new(6))),
+                Some(Box::new(TreeSearchPlayer::new(6))),
+            );
         }
 
         if self.quit_game.pressed(mouse_pos) {
