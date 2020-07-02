@@ -92,7 +92,7 @@ pub struct TreeSearchPlayer {
     state: TreeSearch,
     // The thread to run when calculating next move
     // If none, then no thread is currently running.
-    reciever: Option<mpsc::Receiver<((i32, Move, i32, i32), TreeSearch)>>,
+    reciever: Option<mpsc::Receiver<((i32, Move), TreeSearch)>>,
 }
 #[derive(Debug, Clone)]
 struct TreeSearch {
@@ -118,10 +118,7 @@ impl AIPlayer for TreeSearchPlayer {
                 let mut treesearch = self.state.clone();
                 std::thread::spawn(move || {
                     sender
-                        .send((
-                            treesearch.score(&board, 0, i32::MIN, i32::MAX, player),
-                            treesearch,
-                        ))
+                        .send((treesearch.search(&board, player), treesearch))
                         .unwrap()
                 });
                 self.reciever = Some(reciever);
@@ -129,7 +126,7 @@ impl AIPlayer for TreeSearchPlayer {
             }
             // Try asking the thread if it's done yet, and resetting it to None if it is
             Some(reciever) => match reciever.try_recv() {
-                Ok(((score, move_to_make, _, _), state)) => {
+                Ok(((score, move_to_make), state)) => {
                     self.reciever = None;
                     self.state = state;
                     println!("Best move: {:?} with score {:?}", move_to_make, score);
@@ -138,6 +135,7 @@ impl AIPlayer for TreeSearchPlayer {
                         "Searched {} of {} branches",
                         self.state.branches_searched, self.state.total_branches
                     );
+
                     Poll::Ready(move_to_make)
                 }
                 Err(mpsc::TryRecvError::Empty) => Poll::Pending,
@@ -164,6 +162,20 @@ impl TreeSearchPlayer {
 }
 
 impl TreeSearch {
+    fn search(&mut self, position: &BoardState, player: Color) -> (i32, Move) {
+        let max_depth = self.max_depth;
+        let mut result = (0, (BoardCoord(-1, -1), BoardCoord(-1, -1)), -1, -1);
+        for i in 1..=max_depth {
+            // TODO: This super hacky. Make max_depth a parameter on score instead.
+            // [this_is_fine.dog.png]
+            self.max_depth = i;
+            self.total_branches = 0;
+            self.branches_searched = 0;
+            result = self.score(position, 0, i32::MIN, i32::MAX, player);
+        }
+        (result.0, result.1)
+    }
+
     #[cfg_attr(feature = "perf", flame)]
     fn score(
         &mut self,
@@ -173,7 +185,7 @@ impl TreeSearch {
         mut beta: i32,
         player: Color,
     ) -> (i32, Move, i32, i32) {
-        // Explore only 2 moves ahead
+        // Score the leaf node if we hit max depth or the game would end
         if current_depth >= self.max_depth || position.game_over() {
             let score = self.score_leaf(current_depth, position, player);
             // println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
@@ -461,6 +473,7 @@ impl TreeSearch {
                 }
             }
         }
+
         my_piece_score + my_position_score - (their_piece_score + their_position_score) + bonus
     }
 }
