@@ -92,13 +92,13 @@ pub struct TreeSearchPlayer {
     state: TreeSearch,
     // The thread to run when calculating next move
     // If none, then no thread is currently running.
-    reciever: Option<mpsc::Receiver<((i32, Move, i32, i32), TreeSearch)>>,
+    reciever: Option<mpsc::Receiver<((i32, Move), TreeSearch)>>,
 }
 #[derive(Debug, Clone)]
 struct TreeSearch {
     max_depth: usize,
     // Unfortunately, AIs can not dance, so this is always empty
-    killer_moves: Vec<Move>,
+    principal_variation: Vec<Move>,
     total_branches: usize,
     branches_searched: usize,
 }
@@ -118,10 +118,7 @@ impl AIPlayer for TreeSearchPlayer {
                 let mut treesearch = self.state.clone();
                 std::thread::spawn(move || {
                     sender
-                        .send((
-                            treesearch.score(&board, 0, i32::MIN, i32::MAX, player),
-                            treesearch,
-                        ))
+                        .send((treesearch.search(&board, player), treesearch))
                         .unwrap()
                 });
                 self.reciever = Some(reciever);
@@ -129,15 +126,16 @@ impl AIPlayer for TreeSearchPlayer {
             }
             // Try asking the thread if it's done yet, and resetting it to None if it is
             Some(reciever) => match reciever.try_recv() {
-                Ok(((score, move_to_make, _, _), state)) => {
+                Ok(((score, move_to_make), state)) => {
                     self.reciever = None;
                     self.state = state;
                     println!("Best move: {:?} with score {:?}", move_to_make, score);
-                    println!("Killer {:?}", self.state);
+                    println!("principal {:?}", self.state);
                     println!(
                         "Searched {} of {} branches",
                         self.state.branches_searched, self.state.total_branches
                     );
+
                     Poll::Ready(move_to_make)
                 }
                 Err(mpsc::TryRecvError::Empty) => Poll::Pending,
@@ -154,7 +152,7 @@ impl TreeSearchPlayer {
         TreeSearchPlayer {
             state: TreeSearch {
                 max_depth,
-                killer_moves: vec![(BoardCoord(-1, -1), BoardCoord(-1, -1)); 2 * max_depth],
+                principal_variation: vec![(BoardCoord(-1, -1), BoardCoord(-1, -1)); max_depth],
                 total_branches: 0,
                 branches_searched: 0,
             },
@@ -164,6 +162,20 @@ impl TreeSearchPlayer {
 }
 
 impl TreeSearch {
+    fn search(&mut self, position: &BoardState, player: Color) -> (i32, Move) {
+        let max_depth = self.max_depth;
+        let mut result = (0, (BoardCoord(-1, -1), BoardCoord(-1, -1)), -1, -1);
+        for i in 1..=max_depth {
+            // TODO: This super hacky. Make max_depth a parameter on score instead.
+            // [this_is_fine.dog.png]
+            self.max_depth = i;
+            self.total_branches = 0;
+            self.branches_searched = 0;
+            result = self.score(position, 0, i32::MIN, i32::MAX, player);
+        }
+        (result.0, result.1)
+    }
+
     #[cfg_attr(feature = "perf", flame)]
     fn score(
         &mut self,
@@ -173,7 +185,7 @@ impl TreeSearch {
         mut beta: i32,
         player: Color,
     ) -> (i32, Move, i32, i32) {
-        // Explore only 2 moves ahead
+        // Score the leaf node if we hit max depth or the game would end
         if current_depth >= self.max_depth || position.game_over() {
             let score = self.score_leaf(current_depth, position, player);
             // println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
@@ -181,27 +193,38 @@ impl TreeSearch {
         }
 
         let mut moves = position.board.get_all_moves(position.current_player);
+        // See also: https://www.chessprogramming.org/MVV-LVA
+        // We sort here to make the AI check the most "useful" moves first. This
+        // helps in causing an earlier alpha or beta cutoff, thereby reducing the
+        // number of branches we have to check.
+        // We first check all the captures. We sort the captures by the "most valuable victim"
+        // and then by the "least valuable attacker". This is nice because it
+        // lets us consider the most "useful" moves first--ie: use a pawn to defend an
+        // attacking piece, or try and capture a high-value attacker first.
+        // Note that sort_by_key will sort with smallest values first.const
+        // For normal moves, we start with the most valuable pieces (queen, rook, etc)
+        moves.sort_by_key(|&(start, end)| {
+            let attacker = position.get(start);
+            let victim = position.get(end);
+            match &victim.0 {
+                None => 10 - value(attacker),
+                Some(_) => -(10 * value(victim) - value(attacker)),
+            }
+        });
+
         self.total_branches += moves.len();
 
         let my_turn = player == position.current_player;
         let mut best_score = if my_turn { i32::MIN } else { i32::MAX };
-        let mut best_move = (BoardCoord(-1, -1), BoardCoord(-1, -1));
-        let mut second_best_move = (BoardCoord(-1, -1), BoardCoord(-1, -1));
+        let mut best_move = self.principal_variation[current_depth];
 
-        // First, try checking the killer moves, to get a better value for alpha and beta
-        let killer_move = self.killer_moves[current_depth * 2];
-        let killer_move2 = self.killer_moves[(current_depth * 2) + 1];
-
-        if moves.len() > 1 {
-            if let Some(i) = moves.iter().position(|&the_move| the_move == killer_move) {
-                moves.swap(0, i);
-                // do_killer = true;
-            }
-
-            if let Some(i) = moves.iter().position(|&the_move| the_move == killer_move2) {
-                moves.swap(1, i);
-                // do_killer2 = true;
-            }
+        // First, try checking the principal moves, to get a better value for alpha and beta
+        let principal_move = self.principal_variation[current_depth];
+        if let Some(i) = moves
+            .iter()
+            .position(|&the_move| the_move == principal_move)
+        {
+            moves.swap(0, i);
         }
 
         // Then, for each of our moves, try making it and see which one has the best score
@@ -228,7 +251,6 @@ impl TreeSearch {
                 if best_score < score {
                     alpha = alpha.max(score);
                     best_score = best_score.max(score);
-                    second_best_move = best_move;
                     best_move = (start, end);
 
                     if alpha >= beta {
@@ -243,8 +265,6 @@ impl TreeSearch {
                 if best_score > score {
                     beta = beta.min(score);
                     best_score = best_score.min(score);
-
-                    second_best_move = best_move;
                     best_move = (start, end);
 
                     if alpha >= beta {
@@ -259,13 +279,12 @@ impl TreeSearch {
             debug_assert!(best_move != (BoardCoord(-1, -1), BoardCoord(-1, -1)));
         }
 
-        // Add the best moves found so far to the killer move list
-        self.killer_moves[current_depth * 2] = best_move;
-        self.killer_moves[(current_depth * 2) + 1] = second_best_move;
+        // Add the best moves found so far to the principal move list
+        self.principal_variation[current_depth] = best_move;
 
         self.branches_searched += i;
         // println!(
-        //     "{} Killer moves: {:?} {:?} (at depth: {})",
+        //     "{} principal moves: {:?} {:?} (at depth: {})",
         //     "\t".repeat(current_depth),
         //     best_move,
         //     second_best_move,
@@ -442,6 +461,22 @@ impl TreeSearch {
                 }
             }
         }
+
         my_piece_score + my_position_score - (their_piece_score + their_position_score) + bonus
+    }
+}
+
+fn value(tile: &Tile) -> i32 {
+    use PieceType::*;
+    match tile.0 {
+        None => -1,
+        Some(piece) => match piece.piece {
+            Pawn(_) => 1,
+            Knight => 2,
+            Bishop => 2,
+            Rook => 3,
+            Queen => 4,
+            King => 0,
+        },
     }
 }

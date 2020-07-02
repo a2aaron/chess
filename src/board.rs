@@ -822,15 +822,9 @@ impl Board {
     }
 
     fn insuffient_material(&self) -> bool {
-        let black_pieces = self.get_pieces_hashmap(Color::Black);
-        let white_piece = self.get_pieces_hashmap(Color::White);
-
-        let mut king_only: HashMap<PieceType, u8> = HashMap::new();
-        king_only.insert(PieceType::King, 1);
-        black_pieces == king_only && white_piece == king_only
-        // TODO: you should implement the other three cases where checkmate is impossible
-        // https://en.wikipedia.org/wiki/Draw_(chess)
+        // TODO: you should implement the one harder cases where checkmate is impossible
         /*
+        From https://en.wikipedia.org/wiki/Draw_(chess)
         Impossibility of checkmate – if a position arises in which neither
         player could possibly give checkmate by a series of legal moves, the
         game is a draw ("dead position"). This is usually because there is
@@ -839,14 +833,38 @@ impl Board {
             king versus king
             king and bishop versus king
             king and knight versus king
+            // TODO: this one i haven't implemented this yet beause it is hard
             king and bishop versus king and bishop with the bishops on the same color.
         */
-        // let mut king_bishop: HashMap<PieceType, u8> = HashMap::new();
-        // king_bishop.insert(PieceType::King, 1);
-        // king_bishop.insert(PieceType::Bishop, 1);
-        // let mut king_bishop: HashMap<PieceType, u8> = HashMap::new();
-        // king_bishop.insert(PieceType::King, 1);
-        // king_bishop.insert(PieceType::Knight, 1);
+        let mut num_knights = 0;
+        let mut num_bishops = 0;
+        // let mut black_has_black_square_bishops = 0;
+        // let mut num_white_square_bishops
+
+        use PieceType::*;
+        for i in ROWS {
+            for j in COLS {
+                let coord = BoardCoord(i, j);
+                let tile = self.get(coord).0;
+                match tile {
+                    None => continue,
+                    Some(piece) => match piece.piece {
+                        Pawn(_) | Rook | Queen => return false,
+                        Knight => num_bishops += 1,
+                        Bishop => num_knights += 1,
+                        // we will assume that the board always has two kings
+                        // if it does not have two kings then there are probably
+                        // bigger problems going on
+                        King => continue,
+                    },
+                }
+            }
+        }
+
+        match (num_knights, num_bishops) {
+            (0, 0) | (0, 1) | (1, 0) => true,
+            _ => false,
+        }
     }
 
     fn is_in_check(&self, player: Color) -> bool {
@@ -989,30 +1007,6 @@ impl Board {
         }
         vec
     }
-
-    pub fn get_pieces_hashmap(&self, color: Color) -> HashMap<PieceType, u8> {
-        // TODO: Try to not use a hashmap here, the allocation is slow
-        // consider using a less rigorus hash function (we don't care about Good Crypto here)
-        // consider using a struct here also
-        let mut hashmap = HashMap::new();
-        for i in ROWS {
-            for j in COLS {
-                let coord = BoardCoord(i, j);
-                let tile = self.get(coord).0;
-                match tile {
-                    None => {}
-                    Some(piece) => {
-                        if piece.color == color {
-                            let entry = hashmap.entry(piece.piece).or_insert(0);
-                            *entry += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        hashmap
-    }
 }
 
 impl fmt::Display for Board {
@@ -1028,6 +1022,7 @@ impl fmt::Display for Board {
         Ok(())
     }
 }
+
 /// A board space coordinate. The origin is at the bottom left and (7, 7) is at
 /// the top right. This is in line with how rank-file notation works~~, and also
 /// is how graphics should work~~
