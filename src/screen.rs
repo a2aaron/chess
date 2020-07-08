@@ -2,6 +2,7 @@ use crate::ai::*;
 use crate::board::*;
 use crate::layout::*;
 use crate::rect::*;
+use crate::{hstack, vstack};
 
 use ggez::event::{EventHandler, MouseButton};
 use ggez::graphics::{self, DrawParam, Rect, Text};
@@ -230,30 +231,29 @@ impl TitleScreen {
         let mut black_selector = Selector::new(buttons.clone());
         let mut white_selector = Selector::new(buttons.clone());
 
-        let mut white_selector_stack: VStack<Button> = VStack {
+        let mut white_selector_stack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: white_selector.buttons.as_mut_slice(),
+            children: &mut white_selector.buttons,
             min_dimensions: (None, None),
         };
 
-        let mut black_selector_stack: VStack<Button> = VStack {
+        let mut black_selector_stack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: black_selector.buttons.as_mut_slice(),
+            children: &mut black_selector.buttons,
             min_dimensions: (None, None),
         };
 
         let center_padding = FlexBox::new(1.0);
         let mut center_padding2 = from_dims((30.0, 1.0));
-        let mut selector_stack: HStack<&mut dyn Layout> = HStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [
-                &mut center_padding.clone(),
-                &mut white_selector_stack,
-                &mut center_padding2,
-                &mut black_selector_stack,
-                &mut center_padding.clone(),
-            ],
-            min_dimensions: (Some(SCREEN_WIDTH), None),
+        // Unfortunately, Rust can't seem to infer the right type when the type is
+        // &mut dyn Layout for some reason.
+        let mut selector_stack: HStack<&mut dyn Layout> = hstack! {
+            Some(SCREEN_WIDTH), None =>
+            center_padding.clone();
+            white_selector_stack;
+            center_padding2;
+            black_selector_stack;
+            center_padding.clone();
         };
 
         let mut padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
@@ -262,18 +262,15 @@ impl TitleScreen {
         let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
         let mut padding2 = from_dims((1.0, 25.0));
 
-        let mut vstack: VStack<&mut dyn Layout> = VStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [
-                &mut title,
-                &mut upper_padding,
-                &mut selector_stack,
-                &mut padding,
-                &mut start_game,
-                &mut padding2,
-                &mut quit_game,
-            ],
-            min_dimensions: (Some(SCREEN_WIDTH), None),
+        let mut vstack: VStack<&mut dyn Layout> = vstack! {
+            Some(SCREEN_WIDTH), None =>
+            title;
+            upper_padding;
+            selector_stack;
+            padding;
+            start_game;
+            padding2;
+            quit_game;
         };
 
         vstack.layout(vstack.preferred_size().unwrap());
@@ -433,7 +430,7 @@ impl Grid {
         let off_y = 10.0;
 
         let button_size = self.promote_buttons[0].0.hitbox;
-        let mut layout_buttons: Vec<&mut dyn Layout> = vec![];
+        let mut layout_buttons = vec![];
         for (button, _) in self.promote_buttons.iter_mut() {
             layout_buttons.push(button);
         }
@@ -441,11 +438,10 @@ impl Grid {
         let mut grid = Rect::new(off_x, off_y, 8.0 * self.square_size, 8.0 * self.square_size);
         let mut button_stack = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut layout_buttons[..],
+            children: &mut layout_buttons,
             min_dimensions: (None, None),
         };
 
-        use crate::vstack;
         let mut menu_buttons = vstack! {
             None, None =>
             self.restart;
@@ -453,15 +449,12 @@ impl Grid {
         };
 
         // Same size as the buttons, but used as padding
-        let mut fake_stack = HStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [
-                &mut button_size.clone(),
-                &mut button_size.clone(),
-                &mut button_size.clone(),
-                &mut button_size.clone(),
-            ],
-            min_dimensions: (None, None),
+        let mut fake_stack = hstack! {
+            None, None =>
+            button_size.clone();
+            button_size.clone();
+            button_size.clone();
+            button_size.clone();
         };
 
         let mut padding1 = FlexBox::new(1.0);
@@ -502,10 +495,11 @@ impl Grid {
         };
 
         let mut padding_side = FlexBox::new(1.0);
-        let mut full_ui: HStack<&mut dyn Layout> = HStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [&mut grid, &mut padding_side, &mut sidebar],
-            min_dimensions: (Some(SCREEN_WIDTH - 20.0), None),
+        let mut full_ui: HStack<&mut dyn Layout> = hstack! {
+            Some(SCREEN_WIDTH - 20.0), None =>
+            grid;
+            padding_side;
+            sidebar;
         };
 
         full_ui.layout((SCREEN_WIDTH - 20.0, SCREEN_HEIGHT - 20.0));
