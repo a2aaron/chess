@@ -68,18 +68,25 @@ pub trait Layout {
 
 /// A container that lays out its children vertically stacked on each other.
 /// This container does not have any padding on its children.
-pub struct VStack<'a> {
+/// The generic `Child` type parameter indicates what type the children of this
+/// VStack will be. This is almost always `&mut dyn Layout` when directly building
+/// VStack, but can also be stuff like `VStack<Button>` if you want to borrow a
+/// vector of buttons.
+pub struct VStack<'a, Child = &'a mut dyn Layout>
+where
+    Child: Layout,
+{
     /// The upper left corner of the VStack's bounding box
     pub pos: Point2<f32>,
     /// The children of this VStack.
-    pub children: &'a mut [&'a mut dyn Layout],
+    pub children: &'a mut [Child],
     /// The minimum dimensions of the VStack. If this is None, then the VStack
     /// will try to be as small as possible, and will assume a size of zero
     /// for any flex objects.
     pub min_dimensions: (Option<f32>, Option<f32>),
 }
 
-impl<'a> Layout for VStack<'a> {
+impl<'a, Child: Layout> Layout for VStack<'a, Child> {
     /// The VStack's preferred size is the smallest rectangle containing all of
     /// its rigid children and the minimum dimensions (if they exist).
     fn preferred_size(&self) -> Option<(f32, f32)> {
@@ -193,7 +200,7 @@ impl<'a> Layout for VStack<'a> {
     }
 }
 
-impl<'a> VStack<'a> {
+impl<'a, Child: Layout> VStack<'a, Child> {
     /// The minimum size this VStack can be if all flex objects were given
     /// zero size.
     fn min_size(&self) -> (f32, f32) {
@@ -207,13 +214,41 @@ impl<'a> VStack<'a> {
         size
     }
 }
-pub struct HStack<'a> {
+
+// macro uwu
+#[macro_export]
+macro_rules! vstack {
+    ($w:expr, $h:expr => $($child:expr;)*) => {
+        VStack {
+            pos: ggez::mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [$(&mut $child,)*],
+            min_dimensions: ($w, $h)
+        }
+    };
+}
+
+// macro owo
+#[macro_export]
+macro_rules! hstack {
+    ($w:expr, $h:expr => $($child:expr;)*) => {
+        HStack {
+            pos: ggez::mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [$(&mut $child,)*],
+            min_dimensions: ($w, $h)
+        }
+    };
+}
+
+pub struct HStack<'a, Child = &'a mut dyn Layout>
+where
+    Child: Layout,
+{
     pub pos: Point2<f32>,
-    pub children: &'a mut [&'a mut dyn Layout],
+    pub children: &'a mut [Child],
     pub min_dimensions: (Option<f32>, Option<f32>),
 }
 
-impl<'a> Layout for HStack<'a> {
+impl<'a, Child: Layout> Layout for HStack<'a, Child> {
     fn preferred_size(&self) -> Option<(f32, f32)> {
         let (mut size_x, mut size_y) = self.min_size();
 
@@ -310,7 +345,7 @@ impl<'a> Layout for HStack<'a> {
     }
 }
 
-impl<'a> HStack<'a> {
+impl<'a, Child: Layout> HStack<'a, Child> {
     // Return the minimum size this HStack can be in order to fit all the
     // children's preferred sizes. Children with no prefered size are assumed to be
     // zero size.
@@ -447,5 +482,29 @@ impl<'a> Layout for Rect {
 
     fn flex_factor(&self) -> Option<f32> {
         None
+    }
+}
+
+/// Delegate implementation for &mut Ts
+/// This is nessecary so that VStack<&mut dyn Layout> and similar will work
+/// correctly (dyn Trait implements Trait, but &mut dyn Trait does not)
+impl<T: Layout + ?Sized> Layout for &mut T {
+    fn preferred_size(&self) -> Option<(f32, f32)> {
+        T::preferred_size(self)
+    }
+    fn layout(&mut self, max_size: (f32, f32)) -> (f32, f32) {
+        T::layout(self, max_size)
+    }
+    fn set_position(&mut self, pos: Point2<f32>) {
+        T::set_position(self, pos)
+    }
+    fn set_position_relative(&mut self, offset: Vector2<f32>) {
+        T::set_position_relative(self, offset)
+    }
+    fn flex_factor(&self) -> Option<f32> {
+        T::flex_factor(self)
+    }
+    fn bounding_box(&self) -> Rect {
+        T::bounding_box(self)
     }
 }

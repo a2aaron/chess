@@ -218,33 +218,39 @@ impl TitleScreen {
         let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
         let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
 
-        let mut white_selector = Selector::new(
-            ctx,
-            vec![
-                text("Human", font, 30.0),
-                text("Easy AI", font, 30.0),
-                text("Hard AI", font, 30.0),
-            ],
-            (100.0, 3.0 * 35.0),
-        );
-        let mut black_selector = Selector::new(
-            ctx,
-            vec![
-                text("Human", font, 30.0),
-                text("Easy AI", font, 30.0),
-                text("Hard AI", font, 30.0),
-            ],
-            (100.0, 3.0 * 35.0),
-        );
+        let buttons: Vec<Button> = vec![
+            text("Human", font, 30.0),
+            text("Easy AI", font, 30.0),
+            text("Hard AI", font, 30.0),
+        ]
+        .into_iter()
+        .map(|text| Button::fit_to_text(ctx, (100.0, 35.0), text))
+        .collect();
+
+        let mut black_selector = Selector::new(buttons.clone());
+        let mut white_selector = Selector::new(buttons.clone());
+
+        let mut white_selector_stack: VStack<Button> = VStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: white_selector.buttons.as_mut_slice(),
+            min_dimensions: (None, None),
+        };
+
+        let mut black_selector_stack: VStack<Button> = VStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: black_selector.buttons.as_mut_slice(),
+            min_dimensions: (None, None),
+        };
+
         let center_padding = FlexBox::new(1.0);
         let mut center_padding2 = from_dims((30.0, 1.0));
-        let mut selector_stack = HStack {
+        let mut selector_stack: HStack<&mut dyn Layout> = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut [
                 &mut center_padding.clone(),
-                &mut white_selector,
+                &mut white_selector_stack,
                 &mut center_padding2,
-                &mut black_selector,
+                &mut black_selector_stack,
                 &mut center_padding.clone(),
             ],
             min_dimensions: (Some(SCREEN_WIDTH), None),
@@ -256,7 +262,7 @@ impl TitleScreen {
         let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
         let mut padding2 = from_dims((1.0, 25.0));
 
-        let mut vstack = VStack {
+        let mut vstack: VStack<&mut dyn Layout> = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut [
                 &mut title,
@@ -438,10 +444,12 @@ impl Grid {
             children: &mut layout_buttons[..],
             min_dimensions: (None, None),
         };
-        let mut menu_buttons = VStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [&mut self.restart, &mut self.main_menu],
-            min_dimensions: (None, None),
+
+        use crate::vstack;
+        let mut menu_buttons = vstack! {
+            None, None =>
+            self.restart;
+            self.main_menu;
         };
 
         // Same size as the buttons, but used as padding
@@ -494,7 +502,7 @@ impl Grid {
         };
 
         let mut padding_side = FlexBox::new(1.0);
-        let mut full_ui = HStack {
+        let mut full_ui: HStack<&mut dyn Layout> = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut [&mut grid, &mut padding_side, &mut sidebar],
             min_dimensions: (Some(SCREEN_WIDTH - 20.0), None),
@@ -845,7 +853,7 @@ enum UIState {
     GameOver,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Button {
     pub hitbox: Rect,
     state: ButtonState,
@@ -944,22 +952,13 @@ enum ButtonState {
 #[derive(Debug)]
 pub struct Selector {
     buttons: Vec<Button>,
-    bounding_box: Rect,
     selected: usize,
 }
 
 impl Selector {
-    fn new(ctx: &mut Context, texts: Vec<Text>, dims: (f32, f32)) -> Selector {
-        let button_height = dims.1 / texts.len() as f32;
-        let button_width = dims.0;
-        let buttons = texts
-            .into_iter()
-            .map(|text| Button::fit_to_text(ctx, (button_width, button_height), text))
-            .collect();
-
+    fn new(buttons: Vec<Button>) -> Selector {
         Selector {
             buttons,
-            bounding_box: from_dims(dims),
             selected: 0,
         }
     }
@@ -991,48 +990,6 @@ impl Selector {
             button.draw_with_color(ctx, outer_color, inner_color)?;
         }
         Ok(())
-    }
-}
-
-// TODO: make this not a layout object? you could just stick buttons into a selector container
-// but do layout with vstack instead
-impl<'a> Layout for Selector {
-    fn preferred_size(&self) -> Option<(f32, f32)> {
-        Some((self.bounding_box.w, self.bounding_box.h))
-    }
-
-    fn layout(&mut self, _max_size: (f32, f32)) -> (f32, f32) {
-        let button_width = self.bounding_box().w;
-        let button_height = self.bounding_box().h / self.buttons.len() as f32;
-        for (i, button) in self.buttons.iter_mut().enumerate() {
-            let _ = button.layout((button_width, button_height));
-            button.set_position(mint::Point2 {
-                x: 0.0,
-                y: button_height * i as f32,
-            });
-        }
-
-        self.preferred_size().unwrap()
-    }
-
-    fn bounding_box(&self) -> Rect {
-        self.bounding_box
-    }
-
-    fn set_position(&mut self, pos: mint::Point2<f32>) {
-        self.bounding_box.move_to(pos);
-    }
-
-    fn set_position_relative(&mut self, offset: mint::Vector2<f32>) {
-        self.bounding_box.translate(offset);
-        for button in self.buttons.iter_mut() {
-            let child_offset = mint::Vector2::from(self.bounding_box.point());
-            button.set_position_relative(child_offset);
-        }
-    }
-
-    fn flex_factor(&self) -> Option<f32> {
-        None
     }
 }
 
