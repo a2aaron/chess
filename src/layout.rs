@@ -330,6 +330,7 @@ impl<'a> HStack<'a> {
 /// A higher flex factor indicates that it should have more space, relative
 /// to other flex objects. This object does not have a bounding_box until
 /// `layout` is called
+#[derive(Debug, Clone)]
 pub struct FlexBox {
     pub bounding_box: Option<Rect>,
     pub flex_factor: f32,

@@ -206,34 +206,64 @@ impl MouseState {
 
 #[derive(Debug)]
 pub struct TitleScreen {
-    human_game: Button,
-    ai_game: Button,
+    start_game: Button,
+    white_selector: Selector,
+    black_selector: Selector,
     quit_game: Button,
     title: TextBox,
 }
 
 impl TitleScreen {
     fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
-        let mut ai_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Player vs AI", font, 30.0));
-        let mut human_game =
-            Button::fit_to_text(ctx, (300.0, 35.0), text("Player vs Player", font, 30.0));
-
-        let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
-
         let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
+        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
 
-        let mut padding = from_dims((1.0, 25.0));
+        let mut white_selector = Selector::new(
+            ctx,
+            vec![
+                text("Human", font, 30.0),
+                text("Easy AI", font, 30.0),
+                text("Hard AI", font, 30.0),
+            ],
+            (100.0, 3.0 * 35.0),
+        );
+        let mut black_selector = Selector::new(
+            ctx,
+            vec![
+                text("Human", font, 30.0),
+                text("Easy AI", font, 30.0),
+                text("Hard AI", font, 30.0),
+            ],
+            (100.0, 3.0 * 35.0),
+        );
+        let center_padding = FlexBox::new(1.0);
+        let mut center_padding2 = from_dims((30.0, 1.0));
+        let mut selector_stack = HStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut [
+                &mut center_padding.clone(),
+                &mut white_selector,
+                &mut center_padding2,
+                &mut black_selector,
+                &mut center_padding.clone(),
+            ],
+            min_dimensions: (Some(SCREEN_WIDTH), None),
+        };
+
+        let mut padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
+        let mut start_game =
+            Button::fit_to_text(ctx, (300.0, 35.0), text("Start Game", font, 30.0));
+        let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
         let mut padding2 = from_dims((1.0, 25.0));
-        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.25));
 
         let mut vstack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
             children: &mut [
                 &mut title,
                 &mut upper_padding,
-                &mut human_game,
+                &mut selector_stack,
                 &mut padding,
-                &mut ai_game,
+                &mut start_game,
                 &mut padding2,
                 &mut quit_game,
             ],
@@ -243,20 +273,22 @@ impl TitleScreen {
         vstack.layout(vstack.preferred_size().unwrap());
         vstack.set_position_relative(mint::Vector2 {
             x: 0.0,
-            y: SCREEN_HEIGHT * 0.25,
+            y: SCREEN_HEIGHT * 0.15,
         });
         TitleScreen {
             title,
-            human_game,
-            ai_game,
+            white_selector,
+            black_selector,
+            start_game,
             quit_game,
         }
     }
 
     fn upd8(&mut self, ctx: &mut Context) {
-        self.ai_game.upd8(ctx);
-        self.human_game.upd8(ctx);
+        self.start_game.upd8(ctx);
         self.quit_game.upd8(ctx);
+        self.white_selector.upd8(ctx);
+        self.black_selector.upd8(ctx);
     }
 
     fn mouse_up_upd8(
@@ -264,13 +296,21 @@ impl TitleScreen {
         mouse_pos: mint::Point2<f32>,
         screen_transition: &mut ScreenTransition,
     ) {
-        if self.human_game.pressed(mouse_pos) {
-            *screen_transition = ScreenTransition::StartGame(None, None);
-        } else if self.ai_game.pressed(mouse_pos) {
-            *screen_transition = ScreenTransition::StartGame(
-                None, // Some(Box::new(TreeSearchPlayer::new(6))),
-                Some(Box::new(TreeSearchPlayer::new(6))),
-            );
+        if self.start_game.pressed(mouse_pos) {
+            let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
+                0 => None,
+                1 => Some(Box::new(RandomPlayer {})),
+                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                _ => unreachable!(),
+            };
+
+            let black_ai: Option<Box<dyn AIPlayer>> = match self.black_selector.selected {
+                0 => None,
+                1 => Some(Box::new(RandomPlayer {})),
+                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                _ => unreachable!(),
+            };
+            *screen_transition = ScreenTransition::StartGame(white_ai, black_ai);
         }
 
         if self.quit_game.pressed(mouse_pos) {
@@ -279,10 +319,11 @@ impl TitleScreen {
     }
 
     fn draw(&self, ctx: &mut Context, _font: graphics::Font) -> GameResult<()> {
-        self.human_game.draw(ctx)?;
-        self.ai_game.draw(ctx)?;
-        self.quit_game.draw(ctx)?;
         self.title.draw(ctx)?;
+        self.white_selector.draw(ctx)?;
+        self.black_selector.draw(ctx)?;
+        self.start_game.draw(ctx)?;
+        self.quit_game.draw(ctx)?;
 
         Ok(())
     }
@@ -849,17 +890,25 @@ impl Button {
 
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         use ButtonState::*;
-
-        let fill: graphics::DrawMode = graphics::DrawMode::fill();
-        let stroke_width = 3.0;
-        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
-
         let outer_color = color::WHITE;
         let inner_color = match self.state {
             Idle => graphics::Color::from_rgb_u32(0x13ff00),
             Hover => graphics::Color::from_rgb_u32(0x0ebf00),
             Pressed => graphics::Color::from_rgb_u32(0x0c9f00),
         };
+
+        self.draw_with_color(ctx, outer_color, inner_color)
+    }
+
+    fn draw_with_color(
+        &self,
+        ctx: &mut Context,
+        outer_color: graphics::Color,
+        inner_color: graphics::Color,
+    ) -> GameResult<()> {
+        let fill: graphics::DrawMode = graphics::DrawMode::fill();
+        let stroke_width = 3.0;
+        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
 
         let dims = get_dims(self.hitbox);
         let dest = self.hitbox.point();
@@ -890,6 +939,101 @@ enum ButtonState {
     Idle,
     Hover,
     Pressed,
+}
+
+#[derive(Debug)]
+pub struct Selector {
+    buttons: Vec<Button>,
+    bounding_box: Rect,
+    selected: usize,
+}
+
+impl Selector {
+    fn new(ctx: &mut Context, texts: Vec<Text>, dims: (f32, f32)) -> Selector {
+        let button_height = dims.1 / texts.len() as f32;
+        let button_width = dims.0;
+        let buttons = texts
+            .into_iter()
+            .map(|text| Button::fit_to_text(ctx, (button_width, button_height), text))
+            .collect();
+
+        Selector {
+            buttons,
+            bounding_box: from_dims(dims),
+            selected: 0,
+        }
+    }
+
+    fn upd8(&mut self, ctx: &mut Context) {
+        for (i, button) in &mut self.buttons.iter_mut().enumerate() {
+            button.upd8(ctx);
+            if button.state == ButtonState::Pressed {
+                self.selected = i;
+            }
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+        for (i, button) in self.buttons.iter().enumerate() {
+            use ButtonState::*;
+            let outer_color = if i == self.selected {
+                graphics::Color::from_rgb_u32(0xE3F2FD)
+            } else {
+                color::WHITE
+            };
+            let inner_color = match (button.state, i) {
+                (Pressed, _) => graphics::Color::from_rgb_u32(0x2979FF),
+                (_, i) if i == self.selected => graphics::Color::from_rgb_u32(0x2962FF),
+                (Hover, _) => graphics::Color::from_rgb_u32(0x448AFF),
+                (Idle, _) => graphics::Color::from_rgb_u32(0x82B1FF),
+            };
+
+            button.draw_with_color(ctx, outer_color, inner_color)?;
+        }
+        Ok(())
+    }
+}
+
+// TODO: make this not a layout object? you could just stick buttons into a selector container
+// but do layout with vstack instead
+impl<'a> Layout for Selector {
+    fn preferred_size(&self) -> Option<(f32, f32)> {
+        Some((self.bounding_box.w, self.bounding_box.h))
+    }
+
+    fn layout(&mut self, _max_size: (f32, f32)) -> (f32, f32) {
+        let button_width = self.bounding_box().w;
+        let button_height = self.bounding_box().h / self.buttons.len() as f32;
+        for (i, button) in self.buttons.iter_mut().enumerate() {
+            let _ = button.layout((button_width, button_height));
+            button.set_position(mint::Point2 {
+                x: 0.0,
+                y: button_height * i as f32,
+            });
+        }
+
+        self.preferred_size().unwrap()
+    }
+
+    fn bounding_box(&self) -> Rect {
+        self.bounding_box
+    }
+
+    fn set_position(&mut self, pos: mint::Point2<f32>) {
+        self.bounding_box.move_to(pos);
+    }
+
+    fn set_position_relative(&mut self, offset: mint::Vector2<f32>) {
+        self.bounding_box.translate(offset);
+        for button in self.buttons.iter_mut() {
+            let child_offset = mint::Vector2::from(self.bounding_box.point());
+            button.set_position_relative(child_offset);
+        }
+    }
+
+    fn flex_factor(&self) -> Option<f32> {
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
