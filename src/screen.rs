@@ -111,15 +111,15 @@ impl EventHandler for Game {
         graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
         // FPS counter
-        let text = format!("{}", ggez::timer::fps(ctx));
-        let location = na::Point2::new(100.0, 500.0);
-        draw_text(
-            ctx,
-            text,
-            self.ext_ctx.font,
-            DEFAULT_SCALE,
-            (location, color::RED),
-        )?;
+        // let text = format!("{:.0}", ggez::timer::fps(ctx));
+        // let location = na::Point2::new(0.0, 0.0);
+        // draw_text(
+        //     ctx,
+        //     text,
+        //     self.ext_ctx.font,
+        //     DEFAULT_SCALE,
+        //     (location, color::RED),
+        // )?;
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
@@ -361,6 +361,7 @@ pub struct Grid {
     dead_white: TextBox,
     ai_black: Option<Box<dyn AIPlayer>>,
     ai_white: Option<Box<dyn AIPlayer>>,
+    last_move: Option<(BoardCoord, BoardCoord)>,
 }
 
 impl Grid {
@@ -411,6 +412,7 @@ impl Grid {
             dead_white: TextBox::new((110.0, 100.0)),
             ai_black: None,
             ai_white: None,
+            last_move: None,
         };
         grid.relayout(ext_ctx);
         grid
@@ -524,6 +526,7 @@ impl Grid {
         let board = Board::default();
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
+        self.last_move = None;
     }
 
     fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
@@ -575,6 +578,7 @@ impl Grid {
                         "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
                         self.board.current_player, start, end, self.board
                     ));
+                    self.last_move = Some((start, end));
                 }
                 // If this move would require the AI to promote a piece, then do it
                 if let Some(coord) = self.board.need_promote() {
@@ -651,9 +655,11 @@ impl Grid {
         if drop_loc.is_err() || dragging.is_err() {
             return;
         }
-        let drop_loc = drop_loc.unwrap();
-        let dragging = dragging.unwrap();
-        println!("{:?}", self.board.take_turn(dragging, drop_loc));
+        let start = dragging.unwrap();
+        let end = drop_loc.unwrap();
+        if let Ok(_) = self.board.take_turn(start, end) {
+            self.last_move = Some((start, end));
+        }
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -722,8 +728,17 @@ impl Grid {
 
         let mut mesh = graphics::MeshBuilder::new();
         let solid_rect = Rect::new(0.0, 0.0, self.square_size, self.square_size);
-        mesh.rectangle(fill, solid_rect, color::RED);
+        mesh.rectangle(fill, solid_rect, color::WHITE);
         let solid_rect = mesh.build(ctx).unwrap();
+
+        // Highlight  the "last moved" squares in transparent green
+        if let Some((start, end)) = self.last_move {
+            let start = self.to_screen_coord(start) + self.offset;
+            let end = self.to_screen_coord(end) + self.offset;
+            const VERY_TRANS_GREEN: graphics::Color = graphics::Color::new(0.0, 1.0, 0.0, 0.3);
+            graphics::draw(ctx, &solid_rect, (start, VERY_TRANS_GREEN))?;
+            graphics::draw(ctx, &solid_rect, (end, VERY_TRANS_GREEN))?;
+        }
 
         // TODO: this is an awful idea, instead expose a field similar to self.board.checkmate
         let king_coord = self.board.board.get_king(self.board.current_player);
@@ -732,7 +747,7 @@ impl Grid {
         if let Some(coord) = king_coord {
             if self.board.checkmate != CheckmateState::Normal {
                 let offset = self.to_screen_coord(coord) + self.offset;
-                graphics::draw(ctx, &solid_rect, (offset,))?;
+                graphics::draw(ctx, &solid_rect, (offset, color::RED))?;
             }
         }
 
@@ -746,7 +761,7 @@ impl Grid {
             self.square_size - stroke_width,
             self.square_size - stroke_width,
         );
-        // don't actually care about the color here
+        // the color here is not relevant, as it will be overriden below
         mesh.rectangle(stroke, hollow_rect, color::WHITE);
         let hollow_rect = mesh.build(ctx).unwrap();
 
