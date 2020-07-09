@@ -2,6 +2,7 @@ use crate::ai::*;
 use crate::board::*;
 use crate::layout::*;
 use crate::rect::*;
+use crate::{hstack, vstack};
 
 use ggez::event::{EventHandler, MouseButton};
 use ggez::graphics::{self, DrawParam, Rect, Text};
@@ -206,57 +207,91 @@ impl MouseState {
 
 #[derive(Debug)]
 pub struct TitleScreen {
-    human_game: Button,
-    ai_game: Button,
+    start_game: Button,
+    white_selector: Selector,
+    black_selector: Selector,
     quit_game: Button,
     title: TextBox,
 }
 
 impl TitleScreen {
     fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
-        let mut ai_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Player vs AI", font, 30.0));
-        let mut human_game =
-            Button::fit_to_text(ctx, (300.0, 35.0), text("Player vs Player", font, 30.0));
-
-        let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
-
         let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
+        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
 
-        let mut padding = from_dims((1.0, 25.0));
-        let mut padding2 = from_dims((1.0, 25.0));
-        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.25));
+        let buttons: Vec<Button> = vec![
+            text("Human", font, 30.0),
+            text("Easy AI", font, 30.0),
+            text("Hard AI", font, 30.0),
+        ]
+        .into_iter()
+        .map(|text| Button::fit_to_text(ctx, (100.0, 35.0), text))
+        .collect();
 
-        let mut vstack = VStack {
+        let mut black_selector = Selector::new(buttons.clone());
+        let mut white_selector = Selector::new(buttons.clone());
+
+        let mut white_selector_stack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [
-                &mut title,
-                &mut upper_padding,
-                &mut human_game,
-                &mut padding,
-                &mut ai_game,
-                &mut padding2,
-                &mut quit_game,
-            ],
-            min_dimensions: (Some(SCREEN_WIDTH), None),
+            children: &mut white_selector.buttons,
+            min_dimensions: (None, None),
+        };
+
+        let mut black_selector_stack = VStack {
+            pos: mint::Point2 { x: 0.0, y: 0.0 },
+            children: &mut black_selector.buttons,
+            min_dimensions: (None, None),
+        };
+
+        let center_padding = FlexBox::new(1.0);
+        let mut center_padding2 = from_dims((30.0, 1.0));
+        // Unfortunately, Rust can't seem to infer the right type when the type is
+        // &mut dyn Layout for some reason.
+        let mut selector_stack: HStack<&mut dyn Layout> = hstack! {
+            Some(SCREEN_WIDTH), None =>
+            center_padding.clone();
+            white_selector_stack;
+            center_padding2;
+            black_selector_stack;
+            center_padding.clone();
+        };
+
+        let mut padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
+        let mut start_game =
+            Button::fit_to_text(ctx, (300.0, 35.0), text("Start Game", font, 30.0));
+        let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
+        let mut padding2 = from_dims((1.0, 25.0));
+
+        let mut vstack: VStack<&mut dyn Layout> = vstack! {
+            Some(SCREEN_WIDTH), None =>
+            title;
+            upper_padding;
+            selector_stack;
+            padding;
+            start_game;
+            padding2;
+            quit_game;
         };
 
         vstack.layout(vstack.preferred_size().unwrap());
         vstack.set_position_relative(mint::Vector2 {
             x: 0.0,
-            y: SCREEN_HEIGHT * 0.25,
+            y: SCREEN_HEIGHT * 0.15,
         });
         TitleScreen {
             title,
-            human_game,
-            ai_game,
+            white_selector,
+            black_selector,
+            start_game,
             quit_game,
         }
     }
 
     fn upd8(&mut self, ctx: &mut Context) {
-        self.ai_game.upd8(ctx);
-        self.human_game.upd8(ctx);
+        self.start_game.upd8(ctx);
         self.quit_game.upd8(ctx);
+        self.white_selector.upd8(ctx);
+        self.black_selector.upd8(ctx);
     }
 
     fn mouse_up_upd8(
@@ -264,13 +299,21 @@ impl TitleScreen {
         mouse_pos: mint::Point2<f32>,
         screen_transition: &mut ScreenTransition,
     ) {
-        if self.human_game.pressed(mouse_pos) {
-            *screen_transition = ScreenTransition::StartGame(None, None);
-        } else if self.ai_game.pressed(mouse_pos) {
-            *screen_transition = ScreenTransition::StartGame(
-                None, // Some(Box::new(TreeSearchPlayer::new(6))),
-                Some(Box::new(TreeSearchPlayer::new(6))),
-            );
+        if self.start_game.pressed(mouse_pos) {
+            let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
+                0 => None,
+                1 => Some(Box::new(RandomPlayer {})),
+                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                _ => unreachable!(),
+            };
+
+            let black_ai: Option<Box<dyn AIPlayer>> = match self.black_selector.selected {
+                0 => None,
+                1 => Some(Box::new(RandomPlayer {})),
+                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                _ => unreachable!(),
+            };
+            *screen_transition = ScreenTransition::StartGame(white_ai, black_ai);
         }
 
         if self.quit_game.pressed(mouse_pos) {
@@ -279,10 +322,11 @@ impl TitleScreen {
     }
 
     fn draw(&self, ctx: &mut Context, _font: graphics::Font) -> GameResult<()> {
-        self.human_game.draw(ctx)?;
-        self.ai_game.draw(ctx)?;
-        self.quit_game.draw(ctx)?;
         self.title.draw(ctx)?;
+        self.white_selector.draw(ctx)?;
+        self.black_selector.draw(ctx)?;
+        self.start_game.draw(ctx)?;
+        self.quit_game.draw(ctx)?;
 
         Ok(())
     }
@@ -386,7 +430,7 @@ impl Grid {
         let off_y = 10.0;
 
         let button_size = self.promote_buttons[0].0.hitbox;
-        let mut layout_buttons: Vec<&mut dyn Layout> = vec![];
+        let mut layout_buttons = vec![];
         for (button, _) in self.promote_buttons.iter_mut() {
             layout_buttons.push(button);
         }
@@ -394,25 +438,23 @@ impl Grid {
         let mut grid = Rect::new(off_x, off_y, 8.0 * self.square_size, 8.0 * self.square_size);
         let mut button_stack = HStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut layout_buttons[..],
-            min_dimensions: (None, None),
-        };
-        let mut menu_buttons = VStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [&mut self.restart, &mut self.main_menu],
+            children: &mut layout_buttons,
             min_dimensions: (None, None),
         };
 
+        let mut menu_buttons = vstack! {
+            None, None =>
+            self.restart;
+            self.main_menu;
+        };
+
         // Same size as the buttons, but used as padding
-        let mut fake_stack = HStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [
-                &mut button_size.clone(),
-                &mut button_size.clone(),
-                &mut button_size.clone(),
-                &mut button_size.clone(),
-            ],
-            min_dimensions: (None, None),
+        let mut fake_stack = hstack! {
+            None, None =>
+            button_size.clone();
+            button_size.clone();
+            button_size.clone();
+            button_size.clone();
         };
 
         let mut padding1 = FlexBox::new(1.0);
@@ -453,10 +495,11 @@ impl Grid {
         };
 
         let mut padding_side = FlexBox::new(1.0);
-        let mut full_ui = HStack {
-            pos: mint::Point2 { x: 0.0, y: 0.0 },
-            children: &mut [&mut grid, &mut padding_side, &mut sidebar],
-            min_dimensions: (Some(SCREEN_WIDTH - 20.0), None),
+        let mut full_ui: HStack<&mut dyn Layout> = hstack! {
+            Some(SCREEN_WIDTH - 20.0), None =>
+            grid;
+            padding_side;
+            sidebar;
         };
 
         full_ui.layout((SCREEN_WIDTH - 20.0, SCREEN_HEIGHT - 20.0));
@@ -804,7 +847,7 @@ enum UIState {
     GameOver,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Button {
     pub hitbox: Rect,
     state: ButtonState,
@@ -849,17 +892,25 @@ impl Button {
 
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         use ButtonState::*;
-
-        let fill: graphics::DrawMode = graphics::DrawMode::fill();
-        let stroke_width = 3.0;
-        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
-
         let outer_color = color::WHITE;
         let inner_color = match self.state {
             Idle => graphics::Color::from_rgb_u32(0x13ff00),
             Hover => graphics::Color::from_rgb_u32(0x0ebf00),
             Pressed => graphics::Color::from_rgb_u32(0x0c9f00),
         };
+
+        self.draw_with_color(ctx, outer_color, inner_color)
+    }
+
+    fn draw_with_color(
+        &self,
+        ctx: &mut Context,
+        outer_color: graphics::Color,
+        inner_color: graphics::Color,
+    ) -> GameResult<()> {
+        let fill: graphics::DrawMode = graphics::DrawMode::fill();
+        let stroke_width = 3.0;
+        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
 
         let dims = get_dims(self.hitbox);
         let dest = self.hitbox.point();
@@ -890,6 +941,50 @@ enum ButtonState {
     Idle,
     Hover,
     Pressed,
+}
+
+#[derive(Debug)]
+pub struct Selector {
+    buttons: Vec<Button>,
+    selected: usize,
+}
+
+impl Selector {
+    fn new(buttons: Vec<Button>) -> Selector {
+        Selector {
+            buttons,
+            selected: 0,
+        }
+    }
+
+    fn upd8(&mut self, ctx: &mut Context) {
+        for (i, button) in &mut self.buttons.iter_mut().enumerate() {
+            button.upd8(ctx);
+            if button.state == ButtonState::Pressed {
+                self.selected = i;
+            }
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+        for (i, button) in self.buttons.iter().enumerate() {
+            use ButtonState::*;
+            let outer_color = if i == self.selected {
+                graphics::Color::from_rgb_u32(0xE3F2FD)
+            } else {
+                color::WHITE
+            };
+            let inner_color = match (button.state, i) {
+                (Pressed, _) => graphics::Color::from_rgb_u32(0x2979FF),
+                (_, i) if i == self.selected => graphics::Color::from_rgb_u32(0x2962FF),
+                (Hover, _) => graphics::Color::from_rgb_u32(0x448AFF),
+                (Idle, _) => graphics::Color::from_rgb_u32(0x82B1FF),
+            };
+
+            button.draw_with_color(ctx, outer_color, inner_color)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
