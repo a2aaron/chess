@@ -348,19 +348,36 @@ pub enum ScreenState {
 
 #[derive(Debug)]
 pub struct Grid {
+    // Size of a single square, in pixels
     square_size: f32,
+    // Offset of the entire screen from the upper left.
+    // TODO: this can probably be removed.
     offset: na::Vector2<f32>,
+    // The list of locations the currently held piece can be placed. If this
+    // vector is empty, then either no piece is being held or there are no places
+    // to move that piece
     drop_locations: Vec<BoardCoord>,
     board: BoardState,
+    // TODO: maybe make most of this UI stuff into its own struct?
+    // The checkerboard background of the board
     background_mesh: graphics::Mesh,
+    // Restart and main menu buttons
     restart: Button,
     main_menu: Button,
+    // Promotion buttons. Note that this is reused for both white's and black's side
+    // and we just move the buttons around as needed. The PieceType tells what
+    // piece the pawn will promote to.
     promote_buttons: Vec<(Button, PieceType)>,
+    // Displays who's turn it is and if there is check/checkmate/etc or not
     status: TextBox,
+    // Lists the dead piece for each player.
     dead_black: TextBox,
     dead_white: TextBox,
+    // If this is None, then use a human player. Otherwise, use the listed AI player
     ai_black: Option<Box<dyn AIPlayer>>,
     ai_white: Option<Box<dyn AIPlayer>>,
+    // If Some, then this will contain the previous move just made. This is used
+    // to highlight the "just moved" piece.
     last_move: Option<(BoardCoord, BoardCoord)>,
 }
 
