@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::ai::*;
 use crate::board::*;
 use crate::layout::*;
@@ -357,7 +359,11 @@ pub struct Grid {
     // vector is empty, then either no piece is being held or there are no places
     // to move that piece
     drop_locations: Vec<BoardCoord>,
+    // The actual underling board that runs the chess board.
     board: BoardState,
+    // The pieces meant to be drawn to the board. This struct controls the animations
+    // of moving pieces.
+    animated_board: AnimatedBoard,
     // TODO: maybe make most of this UI stuff into its own struct?
     // The checkerboard background of the board
     background_mesh: graphics::Mesh,
@@ -406,12 +412,14 @@ impl Grid {
                 Knight,
             ),
         ];
-
+        let board = BoardState::new(Board::default());
+        let offset: na::Vector2<f32> = na::Vector2::new(DONTCARE, DONTCARE);
         let mut grid = Grid {
             square_size,
-            offset: na::Vector2::new(DONTCARE, DONTCARE),
+            offset,
             drop_locations: vec![],
-            board: BoardState::new(Board::default()),
+            animated_board: AnimatedBoard::new(&board, square_size, offset),
+            board,
             background_mesh: Grid::background_mesh(ctx, square_size),
             restart: Button::fit_to_text(
                 ctx,
@@ -526,6 +534,7 @@ impl Grid {
         full_ui.set_position_relative(mint::Vector2 { x: 10.0, y: 10.0 });
 
         self.offset = na::Vector2::new(grid.x, grid.y);
+        self.animated_board.offset = na::Vector2::new(grid.x, grid.y);
     }
 
     fn new_game(&mut self) {
@@ -544,6 +553,7 @@ impl Grid {
         self.board = BoardState::new(board);
         self.drop_locations = vec![];
         self.last_move = None;
+        self.animated_board = AnimatedBoard::new(&self.board, self.square_size, self.offset);
     }
 
     fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
@@ -596,6 +606,7 @@ impl Grid {
                         self.board.current_player, start, end, self.board
                     ));
                     self.last_move = Some((start, end));
+                    self.animated_board.move_piece(start, end); // TODO: Find a way to unify this with the human player code
                 }
                 // If this move would require the AI to promote a piece, then do it
                 if let Some(coord) = self.board.need_promote() {
@@ -609,6 +620,8 @@ impl Grid {
                 }
             }
         }
+
+        self.animated_board.upd8();
 
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
@@ -676,6 +689,7 @@ impl Grid {
         let end = drop_loc.unwrap();
         if let Ok(_) = self.board.take_turn(start, end) {
             self.last_move = Some((start, end));
+            self.animated_board.move_piece(start, end);
         }
     }
 
@@ -688,7 +702,8 @@ impl Grid {
             self.draw_highlights(ctx, mouse)?;
         }
 
-        self.draw_pieces(ctx, font)?;
+        // self.draw_pieces(ctx, font)?;
+        self.animated_board.draw(ctx, ext_ctx)?;
 
         // Draw UI buttons, if applicable
         use UIState::*;
@@ -877,6 +892,128 @@ enum UIState {
     Normal,
     Promote(BoardCoord),
     GameOver,
+}
+
+#[derive(Debug)]
+struct AnimatedBoard {
+    square_size: f32,
+    offset: na::Vector2<f32>,
+    pieces: HashMap<BoardCoord, AnimatedPiece>,
+}
+
+impl AnimatedBoard {
+    fn new(board: &BoardState, square_size: f32, offset: na::Vector2<f32>) -> AnimatedBoard {
+        let mut ani_board = AnimatedBoard {
+            square_size,
+            offset,
+            pieces: HashMap::new(),
+        };
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord(i, j);
+                let screen_coord = ani_board.to_screen_coord(coord);
+                let piece = AnimatedPiece::from_tile(screen_coord, board.get(coord));
+                if let Some(piece) = piece {
+                    ani_board.pieces.insert(coord, piece);
+                }
+            }
+        }
+        ani_board
+    }
+
+    fn upd8(&mut self) {
+        for piece in &mut self.pieces.values_mut() {
+            piece.upd8();
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
+        for piece in self.pieces.values() {
+            piece.draw(ctx, ext_ctx, self.square_size)?;
+        }
+        draw_text_workaround(ctx);
+        Ok(())
+    }
+
+    fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
+        // TODO: This will not work for castling. You need to update the key of the rook
+        // as well as the king when you do a castle.
+        // ALSO TODO: THis will also not work for pawn promo
+        let mut piece = self.pieces.remove(&start).unwrap();
+        piece.set_target(self.to_screen_coord(end));
+        self.pieces.insert(end, piece);
+    }
+
+    /// Returns a tuple of where the given screen space coordinates would end up
+    /// on the grid. This function returns Err if the point would be off the grid.
+    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
+        let offset_coords = na::Point2::from(screen_coords) - na::Vector2::from(self.offset);
+        let grid_x = (offset_coords.x / self.square_size).floor() as i8;
+        let grid_y = (offset_coords.y / self.square_size).floor() as i8;
+        BoardCoord::new((grid_x, 7 - grid_y))
+    }
+
+    /// Returns the upper left corner of the square located at `board_coords`
+    fn to_screen_coord(&self, board_coords: BoardCoord) -> mint::Point2<f32> {
+        mint::Point2 {
+            x: board_coords.0 as f32 * self.square_size,
+            y: (7 - board_coords.1) as f32 * self.square_size,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AnimatedPiece {
+    piece: Piece,
+    screen_coord: mint::Point2<f32>,
+    screen_target: mint::Point2<f32>,
+    timer: f32,
+}
+
+impl AnimatedPiece {
+    fn from_tile(coord: mint::Point2<f32>, tile: &Tile) -> Option<AnimatedPiece> {
+        match tile.0 {
+            None => None,
+            Some(piece) => Some(AnimatedPiece {
+                screen_coord: coord,
+                screen_target: coord,
+                piece,
+                timer: 1.0,
+            }),
+        }
+    }
+
+    fn upd8(&mut self) {
+        fn lerp(start: f32, end: f32, percent: f32) -> f32 {
+            start + (end - start) * percent
+        }
+
+        self.screen_coord.x = lerp(self.screen_coord.x, self.screen_target.x, self.timer);
+        self.screen_coord.y = lerp(self.screen_coord.y, self.screen_target.y, self.timer);
+        self.timer = 1.0f32.min(self.timer + 0.01);
+    }
+
+    fn set_target(&mut self, target: mint::Point2<f32>) {
+        self.screen_target = target;
+        self.timer = 0.0;
+    }
+
+    fn draw(
+        &self,
+        ctx: &mut Context,
+        ext_ctx: &ExtendedContext,
+        square_size: f32,
+    ) -> GameResult<()> {
+        let mut text = graphics::Text::new(self.piece.as_str());
+        let text = text.set_font(ext_ctx.font, graphics::Scale::uniform(50.0));
+        let location = na::Point2::from(self.screen_coord)
+            + na::Vector2::new(square_size * 0.42, square_size * 0.25);
+        let color = match self.piece.color {
+            Color::Black => color::BLACK,
+            Color::White => color::WHITE,
+        };
+        graphics::draw(ctx, text, (location, color))
+    }
 }
 
 #[derive(Debug, Clone)]
