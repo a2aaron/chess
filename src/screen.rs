@@ -539,14 +539,14 @@ impl Grid {
 
     fn new_game(&mut self) {
         // let board = vec![
+        //     "BR .. .. .. BK .. .. BR",
+        //     "BP BP BP BP BP BP BP BP",
         //     ".. .. .. .. .. .. .. ..",
         //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. WK .. .. .. .. ..",
         //     ".. .. .. .. .. .. .. ..",
         //     ".. .. .. .. .. .. .. ..",
-        //     ".. .. .. .. .. .. .. ..",
-        //     "BR .. BR .. .. .. .. ..",
-        //     ".. BK .. .. .. .. .. ..",
+        //     "WP WP WP WP WP WP WP WP",
+        //     "WR .. .. .. WK .. .. WR",
         // ];
         // let board = Board::from_string_vec(board);
         let board = Board::default();
@@ -601,27 +601,40 @@ impl Grid {
                 if let std::task::Poll::Ready((start, end)) =
                     ai.next_move(&self.board, self.board.current_player)
                 {
-                    self.board.take_turn(start, end).expect(&format!(
+                    self.board.check_turn(start, end).expect(&format!(
                         "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
                         self.board.current_player, start, end, self.board
                     ));
-                    self.last_move = Some((start, end));
-                    self.animated_board.move_piece(start, end); // TODO: Find a way to unify this with the human player code
+                    Grid::take_turn(
+                        &mut self.board,
+                        &mut self.last_move,
+                        &mut self.animated_board,
+                        start,
+                        end,
+                    );
                 }
                 // If this move would require the AI to promote a piece, then do it
                 if let Some(coord) = self.board.need_promote() {
                     let piece = ai.next_promote(&self.board);
                     if let std::task::Poll::Ready(piece) = piece {
-                        self.board.promote(coord, piece).expect(&format!(
+                        // TODO: Find a way to unify this with the human player code
+                        self.board.check_promote(coord, piece).expect(&format!(
                             "{} AI made illegal promote: {:?}\nboard:\n{:?}",
                             self.board.current_player, piece, self.board
                         ));
+                        Grid::promote(
+                            &mut self.board,
+                            &mut self.last_move,
+                            &mut self.animated_board,
+                            coord,
+                            piece,
+                        );
                     }
                 }
             }
         }
 
-        self.animated_board.upd8();
+        self.animated_board.upd8(ctx);
 
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
@@ -643,7 +656,7 @@ impl Grid {
 
     fn mouse_up_upd8(
         &mut self,
-        ctx: &mut Context,
+        _sctx: &mut Context,
         mouse: &MouseState,
         transition: &mut ScreenTransition,
     ) {
@@ -651,7 +664,23 @@ impl Grid {
         match self.ui_state() {
             Normal => {
                 if self.current_player_is_human() {
-                    self.move_piece(ctx, mouse)
+                    // On a mouse up, try moving the held piece to the current mouse position
+                    let dragging = self.to_grid_coord(mouse.last_down.unwrap());
+                    let drop_loc = self.to_grid_coord(mouse.pos);
+                    if drop_loc.is_err() || dragging.is_err() {
+                        return;
+                    }
+                    let start = dragging.unwrap();
+                    let end = drop_loc.unwrap();
+                    if self.board.check_turn(start, end).is_ok() {
+                        Grid::take_turn(
+                            &mut self.board,
+                            &mut self.last_move,
+                            &mut self.animated_board,
+                            start,
+                            end,
+                        );
+                    }
                 }
             }
             GameOver => {
@@ -666,9 +695,13 @@ impl Grid {
             Promote(coord) => {
                 for (button, piece) in &self.promote_buttons {
                     if button.pressed(mouse.pos) {
-                        self.board
-                            .promote(coord, *piece)
-                            .expect("Expected promotion to work");
+                        Grid::promote(
+                            &mut self.board,
+                            &mut self.last_move,
+                            &mut self.animated_board,
+                            coord,
+                            *piece,
+                        );
                     }
                 }
             }
@@ -676,25 +709,41 @@ impl Grid {
         self.drop_locations = vec![];
     }
 
-    /// Called on mouse up events
-    /// Try to move the piece at the location of the last mouse down press to where the
-    /// mouse currently is. If a drag isn't being done, this function does nothing.
-    fn move_piece(&mut self, _ctx: &mut Context, mouse: &MouseState) {
-        let dragging = self.to_grid_coord(mouse.last_down.unwrap());
-        let drop_loc = self.to_grid_coord(mouse.pos);
-        if drop_loc.is_err() || dragging.is_err() {
-            return;
+    fn promote(
+        board: &mut BoardState,
+        last_move: &mut Option<(BoardCoord, BoardCoord)>,
+        animated_board: &mut AnimatedBoard,
+        coord: BoardCoord,
+        piece: PieceType,
+    ) {
+        board.promote(coord, piece);
+        *last_move = Some((coord, coord));
+        animated_board.promote(coord, piece);
+    }
+
+    // Move the piece from start to end and update the last move/animation boards
+    // TODO: i wish this was &mut self
+    fn take_turn(
+        board: &mut BoardState,
+        last_move: &mut Option<(BoardCoord, BoardCoord)>,
+        animated_board: &mut AnimatedBoard,
+        start: BoardCoord,
+        end: BoardCoord,
+    ) {
+        *last_move = Some((start, end));
+        match move_or_castle(&board.board, start, end) {
+            MoveOrCastle::Move(start, end) => {
+                animated_board.move_piece(start, end);
+            }
+            MoveOrCastle::Castle(start, end, rook_start, rook_end) => {
+                animated_board.move_piece(start, end);
+                animated_board.move_piece(rook_start, rook_end);
+            }
         }
-        let start = dragging.unwrap();
-        let end = drop_loc.unwrap();
-        if let Ok(_) = self.board.take_turn(start, end) {
-            self.last_move = Some((start, end));
-            self.animated_board.move_piece(start, end);
-        }
+        board.take_turn(start, end);
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        let font = ext_ctx.font;
         let mouse = &ext_ctx.mouse_state;
 
         graphics::draw(ctx, &self.background_mesh, (na::Point2::from(self.offset),))?;
@@ -724,33 +773,6 @@ impl Grid {
         self.dead_black.draw(ctx)?;
         self.dead_white.draw(ctx)?;
 
-        Ok(())
-    }
-
-    /// Draw the pieces
-    fn draw_pieces(&self, ctx: &mut Context, font: graphics::Font) -> GameResult<()> {
-        for i in 0..8 {
-            for j in 0..8 {
-                let x = j;
-                let y = 7 - i;
-                let coord = BoardCoord::new((x, y)).unwrap();
-                let tile = self.board.get(coord);
-                let mut text = graphics::Text::new(tile.as_str());
-                let text = text.set_font(font, graphics::Scale::uniform(50.0));
-                let location = self.to_screen_coord(BoardCoord(x, y))
-                    + na::Vector2::new(self.square_size * 0.42, self.square_size * 0.25);
-                let color = match tile.0 {
-                    None => color::TRANSPARENT,
-                    Some(piece) => match piece.color {
-                        Color::Black => color::BLACK,
-                        Color::White => color::WHITE,
-                    },
-                };
-                graphics::draw(ctx, text, (location, color))?;
-            }
-        }
-
-        draw_text_workaround(ctx);
         Ok(())
     }
 
@@ -921,9 +943,9 @@ impl AnimatedBoard {
         ani_board
     }
 
-    fn upd8(&mut self) {
+    fn upd8(&mut self, ctx: &mut Context) {
         for piece in &mut self.pieces.values_mut() {
-            piece.upd8();
+            piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
         }
     }
 
@@ -942,6 +964,10 @@ impl AnimatedBoard {
         let mut piece = self.pieces.remove(&start).unwrap();
         piece.set_target(self.to_screen_coord(end));
         self.pieces.insert(end, piece);
+    }
+
+    fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
+        self.pieces.get_mut(&coord).unwrap().piece.piece = piece;
     }
 
     /// Returns a tuple of where the given screen space coordinates would end up
@@ -965,8 +991,9 @@ impl AnimatedBoard {
 #[derive(Debug)]
 struct AnimatedPiece {
     piece: Piece,
-    screen_coord: mint::Point2<f32>,
-    screen_target: mint::Point2<f32>,
+    pos: mint::Point2<f32>,
+    start: mint::Point2<f32>,
+    end: mint::Point2<f32>,
     timer: f32,
 }
 
@@ -975,26 +1002,32 @@ impl AnimatedPiece {
         match tile.0 {
             None => None,
             Some(piece) => Some(AnimatedPiece {
-                screen_coord: coord,
-                screen_target: coord,
+                pos: coord,
+                start: coord,
+                end: coord,
                 piece,
                 timer: 1.0,
             }),
         }
     }
 
-    fn upd8(&mut self) {
-        fn lerp(start: f32, end: f32, percent: f32) -> f32 {
-            start + (end - start) * percent
+    fn upd8(&mut self, dt: f32) {
+        fn ease(start: f32, end: f32, percent: f32) -> f32 {
+            let c4 = (2.0 * std::f32::consts::PI) / 3.0;
+            let percent = 2.0f32.powf(-10.0 * percent) * ((percent * 10.0 - 0.75) * c4).sin() + 1.0;
+            return start * (1.0 - percent) + end * percent;
         }
 
-        self.screen_coord.x = lerp(self.screen_coord.x, self.screen_target.x, self.timer);
-        self.screen_coord.y = lerp(self.screen_coord.y, self.screen_target.y, self.timer);
-        self.timer = 1.0f32.min(self.timer + 0.01);
+        self.timer += dt;
+        // limit percent to range [0.0, 1.0]
+        let percent = 1.0f32.min(self.timer / 1.0);
+        self.pos.x = ease(self.start.x, self.end.x, percent);
+        self.pos.y = ease(self.start.y, self.end.y, percent);
     }
 
     fn set_target(&mut self, target: mint::Point2<f32>) {
-        self.screen_target = target;
+        self.start = self.end;
+        self.end = target;
         self.timer = 0.0;
     }
 
@@ -1006,8 +1039,8 @@ impl AnimatedPiece {
     ) -> GameResult<()> {
         let mut text = graphics::Text::new(self.piece.as_str());
         let text = text.set_font(ext_ctx.font, graphics::Scale::uniform(50.0));
-        let location = na::Point2::from(self.screen_coord)
-            + na::Vector2::new(square_size * 0.42, square_size * 0.25);
+        let location =
+            na::Point2::from(self.pos) + na::Vector2::new(square_size * 0.42, square_size * 0.25);
         let color = match self.piece.color {
             Color::Black => color::BLACK,
             Color::White => color::WHITE,
