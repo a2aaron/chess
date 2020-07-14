@@ -701,6 +701,10 @@ impl Grid {
                 animated_board.move_piece(start, end);
                 animated_board.move_piece(rook_start, rook_end);
             }
+            MoveOrCastle::EnPassant(start, end, remove) => {
+                animated_board.move_piece(start, end);
+                animated_board.remove(remove);
+            }
         }
         board.take_turn(start, end);
     }
@@ -988,10 +992,11 @@ impl AnimatedBoard {
         Ok(())
     }
 
+    fn remove(&mut self, coord: BoardCoord) {
+        self.pieces.remove(&coord);
+    }
+
     fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        // TODO: This will not work for castling. You need to update the key of the rook
-        // as well as the king when you do a castle.
-        // ALSO TODO: THis will also not work for pawn promo
         let mut piece = self.pieces.remove(&start).unwrap();
         piece.set_target(self.to_screen_coord(end));
         self.pieces.insert(end, piece);

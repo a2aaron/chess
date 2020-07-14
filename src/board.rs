@@ -1234,9 +1234,11 @@ pub enum BoardSide {
     Kingside,
 }
 
+// TODO: maybe unify this with the below MoveType enum. Kinda hacky
 pub enum MoveOrCastle {
     Move(BoardCoord, BoardCoord),
     Castle(BoardCoord, BoardCoord, BoardCoord, BoardCoord),
+    EnPassant(BoardCoord, BoardCoord, BoardCoord),
 }
 
 pub fn move_or_castle(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveOrCastle {
@@ -1250,6 +1252,14 @@ pub fn move_or_castle(board: &Board, start: BoardCoord, end: BoardCoord) -> Move
             };
             MoveOrCastle::Castle(start, end, rook_start, rook_end)
         }
+        MoveType::EnPassant(side) => match side {
+            BoardSide::Queenside => {
+                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 - 1, start.1))
+            }
+            BoardSide::Kingside => {
+                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 + 1, start.1))
+            }
+        },
         _ => MoveOrCastle::Move(start, end),
     }
 }
@@ -1257,6 +1267,9 @@ pub fn move_or_castle(board: &Board, start: BoardCoord, end: BoardCoord) -> Move
 enum MoveType {
     Castle(Color, BoardSide),
     Normal,
+    // A "queenside" enpassant is defined as the attacking pawn moving towards the
+    // queen's side of the board (the x coordinate decreases), and vice versa for
+    // "kingside" enpassant
     EnPassant(BoardSide),
     Lunge,
 }
