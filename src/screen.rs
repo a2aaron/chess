@@ -350,6 +350,7 @@ pub enum ScreenState {
 
 #[derive(Debug)]
 pub struct Grid {
+    // "GRID UI"
     // Size of a single square, in pixels
     square_size: f32,
     // Offset of the entire screen from the upper left.
@@ -359,32 +360,23 @@ pub struct Grid {
     // vector is empty, then either no piece is being held or there are no places
     // to move that piece
     drop_locations: Vec<BoardCoord>,
-    // The actual underling board that runs the chess board.
-    board: BoardState,
     // The pieces meant to be drawn to the board. This struct controls the animations
     // of moving pieces.
     animated_board: AnimatedBoard,
-    // TODO: maybe make most of this UI stuff into its own struct?
-    // The checkerboard background of the board
-    background_mesh: graphics::Mesh,
-    // Restart and main menu buttons
-    restart: Button,
-    main_menu: Button,
-    // Promotion buttons. Note that this is reused for both white's and black's side
-    // and we just move the buttons around as needed. The PieceType tells what
-    // piece the pawn will promote to.
-    promote_buttons: Vec<(Button, PieceType)>,
-    // Displays who's turn it is and if there is check/checkmate/etc or not
-    status: TextBox,
-    // Lists the dead piece for each player.
-    dead_black: TextBox,
-    dead_white: TextBox,
-    // If this is None, then use a human player. Otherwise, use the listed AI player
-    ai_black: Option<Box<dyn AIPlayer>>,
-    ai_white: Option<Box<dyn AIPlayer>>,
     // If Some, then this will contain the previous move just made. This is used
     // to highlight the "just moved" piece.
     last_move: Option<(BoardCoord, BoardCoord)>,
+    // The checkerboard background of the board
+    background_mesh: graphics::Mesh,
+    // The actual underling board that runs the chess board.
+    // "BOARD STATE"
+    board: BoardState,
+    // If this is None, then use a human player. Otherwise, use the listed AI player
+    ai_black: Option<Box<dyn AIPlayer>>,
+    ai_white: Option<Box<dyn AIPlayer>>,
+    // TODO: maybe make most of this UI stuff into its own struct?
+    // "SIDEBAR UI"
+    sidebar: GameSidebar,
 }
 
 impl Grid {
@@ -419,25 +411,27 @@ impl Grid {
             offset,
             drop_locations: vec![],
             animated_board: AnimatedBoard::new(&board, square_size, offset),
-            board,
             background_mesh: Grid::background_mesh(ctx, square_size),
-            restart: Button::fit_to_text(
-                ctx,
-                (100.0, 35.0),
-                text("Restart Game", font, DEFAULT_SCALE),
-            ),
-            main_menu: Button::fit_to_text(
-                ctx,
-                (100.0, 35.0),
-                text("Main Menu", font, DEFAULT_SCALE),
-            ),
-            status: TextBox::new((110.0, 100.0)),
-            promote_buttons,
-            dead_black: TextBox::new((110.0, 100.0)),
-            dead_white: TextBox::new((110.0, 100.0)),
+            last_move: None,
+            board,
             ai_black: None,
             ai_white: None,
-            last_move: None,
+            sidebar: GameSidebar {
+                restart: Button::fit_to_text(
+                    ctx,
+                    (100.0, 35.0),
+                    text("Restart Game", font, DEFAULT_SCALE),
+                ),
+                main_menu: Button::fit_to_text(
+                    ctx,
+                    (100.0, 35.0),
+                    text("Main Menu", font, DEFAULT_SCALE),
+                ),
+                status: TextBox::new((110.0, 100.0)),
+                promote_buttons,
+                dead_black: TextBox::new((110.0, 100.0)),
+                dead_white: TextBox::new((110.0, 100.0)),
+            },
         };
         grid.relayout(ext_ctx);
         grid
@@ -456,9 +450,9 @@ impl Grid {
         let off_x = 10.0;
         let off_y = 10.0;
 
-        let button_size = self.promote_buttons[0].0.hitbox;
+        let button_size = self.sidebar.promote_buttons[0].0.hitbox;
         let mut layout_buttons = vec![];
-        for (button, _) in self.promote_buttons.iter_mut() {
+        for (button, _) in self.sidebar.promote_buttons.iter_mut() {
             layout_buttons.push(button);
         }
 
@@ -471,8 +465,8 @@ impl Grid {
 
         let mut menu_buttons = vstack! {
             None, None =>
-            self.restart;
-            self.main_menu;
+            self.sidebar.restart;
+            self.sidebar.main_menu;
         };
 
         // Same size as the buttons, but used as padding
@@ -492,24 +486,24 @@ impl Grid {
             Color::White => [
                 &mut fake_stack,
                 &mut padding1,
-                &mut self.dead_black,
+                &mut self.sidebar.dead_black,
                 &mut padding2,
-                &mut self.status,
+                &mut self.sidebar.status,
                 &mut menu_buttons,
                 &mut padding3,
-                &mut self.dead_white,
+                &mut self.sidebar.dead_white,
                 &mut padding4,
                 &mut button_stack,
             ],
             Color::Black => [
                 &mut button_stack,
                 &mut padding1,
-                &mut self.dead_black,
+                &mut self.sidebar.dead_black,
                 &mut padding2,
-                &mut self.status,
+                &mut self.sidebar.status,
                 &mut menu_buttons,
                 &mut padding3,
-                &mut self.dead_white,
+                &mut self.sidebar.dead_white,
                 &mut padding4,
                 &mut fake_stack,
             ],
@@ -557,39 +551,7 @@ impl Grid {
     }
 
     fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
-        // Update status message
-        let player_str = self.board.current_player.as_str();
-
-        let status_text = match self.board.checkmate {
-            CheckmateState::Stalemate => "The game has ended!\nStalemate!".to_owned(),
-            CheckmateState::InsuffientMaterial => {
-                "The game has ended!\nInsuffient material!".to_owned()
-            }
-            CheckmateState::Checkmate => {
-                ["The game has ended!\n", player_str, " is in checkmate!"].concat()
-            }
-            CheckmateState::Check => [player_str, " is in check!"].concat(),
-            CheckmateState::Normal => [player_str, " to move."].concat(),
-        };
-        self.status.text = text(status_text, ext_ctx.font, 25.0);
-
-        self.dead_black.text = text(piece_vec_str(&self.board.dead_black), ext_ctx.font, 30.0);
-        self.dead_white.text = text(piece_vec_str(&self.board.dead_white), ext_ctx.font, 30.0);
-
-        // Update buttons
-        use UIState::*;
-        match self.ui_state() {
-            Normal => (),
-            GameOver => {
-                self.main_menu.upd8(ctx);
-                self.restart.upd8(ctx);
-            }
-            Promote(_) => {
-                for (button, _) in &mut self.promote_buttons {
-                    button.upd8(ctx);
-                }
-            }
-        }
+        self.sidebar.upd8(ctx, ext_ctx, &self.board);
 
         // Take AI turn, if need be
         if !self.board.game_over() {
@@ -684,16 +646,16 @@ impl Grid {
                 }
             }
             GameOver => {
-                if self.restart.pressed(mouse.pos) {
+                if self.sidebar.restart.pressed(mouse.pos) {
                     self.new_game();
                 }
 
-                if self.main_menu.pressed(mouse.pos) {
+                if self.sidebar.main_menu.pressed(mouse.pos) {
                     *transition = ScreenTransition::ToTitleScreen;
                 }
             }
             Promote(coord) => {
-                for (button, piece) in &self.promote_buttons {
+                for (button, piece) in &self.sidebar.promote_buttons {
                     if button.pressed(mouse.pos) {
                         Grid::promote(
                             &mut self.board,
@@ -754,24 +716,7 @@ impl Grid {
         // self.draw_pieces(ctx, font)?;
         self.animated_board.draw(ctx, ext_ctx)?;
 
-        // Draw UI buttons, if applicable
-        use UIState::*;
-        match self.ui_state() {
-            Normal => (),
-            GameOver => {
-                self.restart.draw(ctx)?;
-                self.main_menu.draw(ctx)?;
-            }
-            Promote(_) => {
-                for (button, _) in &self.promote_buttons {
-                    button.draw(ctx)?;
-                }
-            }
-        }
-
-        self.status.draw(ctx)?;
-        self.dead_black.draw(ctx)?;
-        self.dead_white.draw(ctx)?;
+        self.sidebar.draw(ctx, &self.board)?;
 
         Ok(())
     }
@@ -914,6 +859,92 @@ enum UIState {
     Normal,
     Promote(BoardCoord),
     GameOver,
+}
+
+#[derive(Debug)]
+struct GameSidebar {
+    // Restart and main menu buttons
+    restart: Button,
+    main_menu: Button,
+    // Promotion buttons. Note that this is reused for both white's and black's side
+    // and we just move the buttons around as needed. The PieceType tells what
+    // piece the pawn will promote to.
+    promote_buttons: Vec<(Button, PieceType)>,
+    // Displays who's turn it is and if there is check/checkmate/etc or not
+    status: TextBox,
+    // Lists the dead piece for each player.
+    dead_black: TextBox,
+    dead_white: TextBox,
+}
+
+impl GameSidebar {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext, board: &BoardState) {
+        // Update status message
+        let player_str = board.current_player.as_str();
+
+        let status_text = match board.checkmate {
+            CheckmateState::Stalemate => "The game has ended!\nStalemate!".to_owned(),
+            CheckmateState::InsuffientMaterial => {
+                "The game has ended!\nInsuffient material!".to_owned()
+            }
+            CheckmateState::Checkmate => {
+                ["The game has ended!\n", player_str, " is in checkmate!"].concat()
+            }
+            CheckmateState::Check => [player_str, " is in check!"].concat(),
+            CheckmateState::Normal => [player_str, " to move."].concat(),
+        };
+        self.status.text = text(status_text, ext_ctx.font, 25.0);
+
+        self.dead_black.text = text(piece_vec_str(&board.dead_black), ext_ctx.font, 30.0);
+        self.dead_white.text = text(piece_vec_str(&board.dead_white), ext_ctx.font, 30.0);
+
+        // Update buttons
+        use UIState::*;
+        match self.ui_state(board) {
+            Normal => (),
+            GameOver => {
+                self.main_menu.upd8(ctx);
+                self.restart.upd8(ctx);
+            }
+            Promote(_) => {
+                for (button, _) in &mut self.promote_buttons {
+                    button.upd8(ctx);
+                }
+            }
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, board: &BoardState) -> GameResult<()> {
+        // Draw UI buttons, if applicable
+        use UIState::*;
+        match self.ui_state(board) {
+            Normal => (),
+            GameOver => {
+                self.restart.draw(ctx)?;
+                self.main_menu.draw(ctx)?;
+            }
+            Promote(_) => {
+                for (button, _) in &self.promote_buttons {
+                    button.draw(ctx)?;
+                }
+            }
+        }
+
+        self.status.draw(ctx)?;
+        self.dead_black.draw(ctx)?;
+        self.dead_white.draw(ctx)?;
+
+        Ok(())
+    }
+
+    // todo: remove--should go into some board struct
+    fn ui_state(&self, board: &BoardState) -> UIState {
+        match (board.game_over(), board.need_promote()) {
+            (false, None) => UIState::Normal,
+            (false, Some(coord)) => UIState::Promote(coord),
+            (true, _) => UIState::GameOver,
+        }
+    }
 }
 
 #[derive(Debug)]
