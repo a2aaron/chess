@@ -352,7 +352,7 @@ pub enum ScreenState {
 pub struct Grid {
     // Handles drawing the grid stuff
     grid: GridUI,
-    // The actual underlying board
+    // The actual underling board that runs the chess board.
     board: BoardState,
     // If this is None, then use a human player. Otherwise, use the listed AI player
     ai_black: Option<Box<dyn AIPlayer>>,
@@ -542,7 +542,8 @@ impl Grid {
     }
 
     fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
-        self.sidebar.upd8(ctx, ext_ctx, &self.board);
+        self.sidebar
+            .upd8(ctx, ext_ctx, &self.board, self.ui_state());
 
         // Take AI turn, if need be
         if !self.board.game_over() {
@@ -657,7 +658,7 @@ impl Grid {
 
         self.grid.animated_board.draw(ctx, ext_ctx)?;
 
-        self.sidebar.draw(ctx, &self.board)?;
+        self.sidebar.draw(ctx, self.ui_state())?;
 
         Ok(())
     }
@@ -706,9 +707,10 @@ struct GridUI {
     last_move: Option<(BoardCoord, BoardCoord)>,
     // The checkerboard background of the board
     background_mesh: graphics::Mesh,
-    // The actual underling board that runs the chess board.
 }
 
+/// This struct mostly handles drawing the chess board, its pieces, square
+/// highlights, and handling screenspace/boardspace convesions
 impl GridUI {
     fn upd8(&mut self, ctx: &mut Context) {
         // probably another thing here????
@@ -871,6 +873,9 @@ impl GridUI {
     }
 }
 
+/// This struct handles the drawing and state maitence of the sidebar. Note that
+/// this struct does not actually handle button functionality--this is done
+/// up in Grid
 #[derive(Debug)]
 struct GameSidebar {
     // Restart and main menu buttons
@@ -888,7 +893,13 @@ struct GameSidebar {
 }
 
 impl GameSidebar {
-    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext, board: &BoardState) {
+    fn upd8(
+        &mut self,
+        ctx: &mut Context,
+        ext_ctx: &mut ExtendedContext,
+        board: &BoardState,
+        ui_state: UIState,
+    ) {
         // Update status message
         let player_str = board.current_player.as_str();
 
@@ -910,7 +921,7 @@ impl GameSidebar {
 
         // Update buttons
         use UIState::*;
-        match self.ui_state(board) {
+        match ui_state {
             Normal => (),
             GameOver => {
                 self.main_menu.upd8(ctx);
@@ -924,10 +935,10 @@ impl GameSidebar {
         }
     }
 
-    fn draw(&self, ctx: &mut Context, board: &BoardState) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context, ui_state: UIState) -> GameResult<()> {
         // Draw UI buttons, if applicable
         use UIState::*;
-        match self.ui_state(board) {
+        match ui_state {
             Normal => (),
             GameOver => {
                 self.restart.draw(ctx)?;
@@ -945,15 +956,6 @@ impl GameSidebar {
         self.dead_white.draw(ctx)?;
 
         Ok(())
-    }
-
-    // todo: remove--should go into some board struct
-    fn ui_state(&self, board: &BoardState) -> UIState {
-        match (board.game_over(), board.need_promote()) {
-            (false, None) => UIState::Normal,
-            (false, Some(coord)) => UIState::Promote(coord),
-            (true, _) => UIState::GameOver,
-        }
     }
 }
 
