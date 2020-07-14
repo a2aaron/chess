@@ -718,7 +718,7 @@ impl GridUI {
     }
 
     fn upd8_drop_locations(&mut self, mouse_pos: mint::Point2<f32>, board: &BoardState) {
-        let coord = self.to_grid_coord(mouse_pos);
+        let coord = to_grid_coord(self.square_size, self.offset, mouse_pos);
         match coord {
             Err(_) => {
                 self.drop_locations = vec![];
@@ -784,7 +784,7 @@ impl GridUI {
         }
 
         // Color the currently highlighted square red if it is the player's piece or if the player is dragging it
-        let pos = self.to_grid_coord(mouse.pos).ok();
+        let pos = to_grid_coord(self.square_size, self.offset, mouse.pos).ok();
         if let Some(coord) = pos {
             let same_color = board.get(coord).is_color(board.current_player);
             let is_dragging = mouse.dragging.is_some();
@@ -799,7 +799,7 @@ impl GridUI {
 
         // Color the dragged square green
         if let Some(dragging) = mouse.dragging {
-            let dragging = self.to_grid_coord(dragging);
+            let dragging = to_grid_coord(self.square_size, self.offset, dragging);
             if let Ok(coord) = dragging {
                 let offset: na::Point2<f32> = self.to_screen_coord(coord) + self.offset;
                 graphics::draw(ctx, &hollow_rect, (offset, color::GREEN))?;
@@ -855,21 +855,154 @@ impl GridUI {
         }
     }
 
-    /// Returns a tuple of where the given screen space coordinates would end up
-    /// on the grid. This function returns Err if the point would be off the grid.
     fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
-        let offset_coords: na::Point2<f32> = na::Point2::from(screen_coords) - self.offset;
-        let grid_x = (offset_coords.x / self.square_size).floor() as i8;
-        let grid_y = (offset_coords.y / self.square_size).floor() as i8;
-        BoardCoord::new((grid_x, 7 - grid_y))
+        to_grid_coord(self.square_size, self.offset, screen_coords)
     }
 
-    /// Returns the upper left corner of the square located at `board_coords`
-    fn to_screen_coord(&self, board_coords: BoardCoord) -> na::Point2<f32> {
-        na::Point2::new(
-            board_coords.0 as f32 * self.square_size,
-            (7 - board_coords.1) as f32 * self.square_size,
-        )
+    fn to_screen_coord(&self, board_coord: BoardCoord) -> na::Point2<f32> {
+        na::Point2::from(to_screen_coord(self.square_size, board_coord))
+    }
+}
+
+#[derive(Debug)]
+struct AnimatedBoard {
+    square_size: f32,
+    offset: na::Vector2<f32>,
+    pieces: HashMap<BoardCoord, AnimatedPiece>,
+}
+
+impl AnimatedBoard {
+    fn new(board: &BoardState, square_size: f32, offset: na::Vector2<f32>) -> AnimatedBoard {
+        let mut ani_board = AnimatedBoard {
+            square_size,
+            offset,
+            pieces: HashMap::new(),
+        };
+        for i in 0..8 {
+            for j in 0..8 {
+                let coord = BoardCoord(i, j);
+                let screen_coord = to_screen_coord(square_size, coord);
+                let piece = AnimatedPiece::from_tile(screen_coord, board.get(coord));
+                if let Some(piece) = piece {
+                    ani_board.pieces.insert(coord, piece);
+                }
+            }
+        }
+        ani_board
+    }
+
+    fn upd8(&mut self, ctx: &mut Context) {
+        for piece in &mut self.pieces.values_mut() {
+            piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
+        for piece in self.pieces.values() {
+            piece.draw(ctx, ext_ctx, self.square_size)?;
+        }
+        draw_text_workaround(ctx);
+        Ok(())
+    }
+
+    fn remove(&mut self, coord: BoardCoord) {
+        self.pieces.remove(&coord);
+    }
+
+    fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
+        let mut piece = self.pieces.remove(&start).unwrap();
+        piece.set_target(self.to_screen_coord(end));
+        self.pieces.insert(end, piece);
+    }
+
+    fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
+        self.pieces.get_mut(&coord).unwrap().piece.piece = piece;
+    }
+
+    fn to_screen_coord(&self, board_coord: BoardCoord) -> mint::Point2<f32> {
+        to_screen_coord(self.square_size, board_coord)
+    }
+}
+
+/// Returns a tuple of where the given screen space coordinates would end up
+/// on the grid. This function returns Err if the point would be off the grid.
+fn to_grid_coord<V: Into<na::Vector2<f32>>>(
+    square_size: f32,
+    offset: V,
+    screen_coords: mint::Point2<f32>,
+) -> Result<BoardCoord, &'static str> {
+    let offset_coords = na::Point2::from(screen_coords) - offset.into();
+    let grid_x = (offset_coords.x / square_size).floor() as i8;
+    let grid_y = (offset_coords.y / square_size).floor() as i8;
+    BoardCoord::new((grid_x, 7 - grid_y))
+}
+
+/// Returns the upper left corner of the square located at `board_coords`
+fn to_screen_coord(square_size: f32, board_coord: BoardCoord) -> mint::Point2<f32> {
+    mint::Point2 {
+        x: board_coord.0 as f32 * square_size,
+        y: (7 - board_coord.1) as f32 * square_size,
+    }
+}
+
+#[derive(Debug)]
+struct AnimatedPiece {
+    piece: Piece,
+    pos: mint::Point2<f32>,
+    start: mint::Point2<f32>,
+    end: mint::Point2<f32>,
+    timer: f32,
+}
+
+impl AnimatedPiece {
+    fn from_tile(coord: mint::Point2<f32>, tile: &Tile) -> Option<AnimatedPiece> {
+        match tile.0 {
+            None => None,
+            Some(piece) => Some(AnimatedPiece {
+                pos: coord,
+                start: coord,
+                end: coord,
+                piece,
+                timer: 1.0,
+            }),
+        }
+    }
+
+    fn upd8(&mut self, dt: f32) {
+        fn ease(start: f32, end: f32, percent: f32) -> f32 {
+            let c4 = (2.0 * std::f32::consts::PI) / 3.0;
+            let percent = 2.0f32.powf(-10.0 * percent) * ((percent * 10.0 - 0.75) * c4).sin() + 1.0;
+            return start * (1.0 - percent) + end * percent;
+        }
+
+        self.timer += dt;
+        // limit percent to range [0.0, 1.0]
+        let percent = 1.0f32.min(self.timer / 1.0);
+        self.pos.x = ease(self.start.x, self.end.x, percent);
+        self.pos.y = ease(self.start.y, self.end.y, percent);
+    }
+
+    fn set_target(&mut self, target: mint::Point2<f32>) {
+        self.start = self.pos;
+        self.end = target;
+        self.timer = 0.0;
+    }
+
+    fn draw(
+        &self,
+        ctx: &mut Context,
+        ext_ctx: &ExtendedContext,
+        square_size: f32,
+    ) -> GameResult<()> {
+        let mut text = graphics::Text::new(self.piece.as_str());
+        let text = text.set_font(ext_ctx.font, graphics::Scale::uniform(50.0));
+        let location =
+            na::Point2::from(self.pos) + na::Vector2::new(square_size * 0.42, square_size * 0.25);
+        let color = match self.piece.color {
+            Color::Black => color::BLACK,
+            Color::White => color::WHITE,
+        };
+        graphics::draw(ctx, text, (location, color))
     }
 }
 
@@ -956,140 +1089,6 @@ impl GameSidebar {
         self.dead_white.draw(ctx)?;
 
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct AnimatedBoard {
-    square_size: f32,
-    offset: na::Vector2<f32>,
-    pieces: HashMap<BoardCoord, AnimatedPiece>,
-}
-
-impl AnimatedBoard {
-    fn new(board: &BoardState, square_size: f32, offset: na::Vector2<f32>) -> AnimatedBoard {
-        let mut ani_board = AnimatedBoard {
-            square_size,
-            offset,
-            pieces: HashMap::new(),
-        };
-        for i in 0..8 {
-            for j in 0..8 {
-                let coord = BoardCoord(i, j);
-                let screen_coord = ani_board.to_screen_coord(coord);
-                let piece = AnimatedPiece::from_tile(screen_coord, board.get(coord));
-                if let Some(piece) = piece {
-                    ani_board.pieces.insert(coord, piece);
-                }
-            }
-        }
-        ani_board
-    }
-
-    fn upd8(&mut self, ctx: &mut Context) {
-        for piece in &mut self.pieces.values_mut() {
-            piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
-        }
-    }
-
-    fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        for piece in self.pieces.values() {
-            piece.draw(ctx, ext_ctx, self.square_size)?;
-        }
-        draw_text_workaround(ctx);
-        Ok(())
-    }
-
-    fn remove(&mut self, coord: BoardCoord) {
-        self.pieces.remove(&coord);
-    }
-
-    fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        let mut piece = self.pieces.remove(&start).unwrap();
-        piece.set_target(self.to_screen_coord(end));
-        self.pieces.insert(end, piece);
-    }
-
-    fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
-        self.pieces.get_mut(&coord).unwrap().piece.piece = piece;
-    }
-
-    /// Returns a tuple of where the given screen space coordinates would end up
-    /// on the grid. This function returns Err if the point would be off the grid.
-    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
-        let offset_coords = na::Point2::from(screen_coords) - na::Vector2::from(self.offset);
-        let grid_x = (offset_coords.x / self.square_size).floor() as i8;
-        let grid_y = (offset_coords.y / self.square_size).floor() as i8;
-        BoardCoord::new((grid_x, 7 - grid_y))
-    }
-
-    /// Returns the upper left corner of the square located at `board_coords`
-    fn to_screen_coord(&self, board_coords: BoardCoord) -> mint::Point2<f32> {
-        mint::Point2 {
-            x: board_coords.0 as f32 * self.square_size,
-            y: (7 - board_coords.1) as f32 * self.square_size,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct AnimatedPiece {
-    piece: Piece,
-    pos: mint::Point2<f32>,
-    start: mint::Point2<f32>,
-    end: mint::Point2<f32>,
-    timer: f32,
-}
-
-impl AnimatedPiece {
-    fn from_tile(coord: mint::Point2<f32>, tile: &Tile) -> Option<AnimatedPiece> {
-        match tile.0 {
-            None => None,
-            Some(piece) => Some(AnimatedPiece {
-                pos: coord,
-                start: coord,
-                end: coord,
-                piece,
-                timer: 1.0,
-            }),
-        }
-    }
-
-    fn upd8(&mut self, dt: f32) {
-        fn ease(start: f32, end: f32, percent: f32) -> f32 {
-            let c4 = (2.0 * std::f32::consts::PI) / 3.0;
-            let percent = 2.0f32.powf(-10.0 * percent) * ((percent * 10.0 - 0.75) * c4).sin() + 1.0;
-            return start * (1.0 - percent) + end * percent;
-        }
-
-        self.timer += dt;
-        // limit percent to range [0.0, 1.0]
-        let percent = 1.0f32.min(self.timer / 1.0);
-        self.pos.x = ease(self.start.x, self.end.x, percent);
-        self.pos.y = ease(self.start.y, self.end.y, percent);
-    }
-
-    fn set_target(&mut self, target: mint::Point2<f32>) {
-        self.start = self.pos;
-        self.end = target;
-        self.timer = 0.0;
-    }
-
-    fn draw(
-        &self,
-        ctx: &mut Context,
-        ext_ctx: &ExtendedContext,
-        square_size: f32,
-    ) -> GameResult<()> {
-        let mut text = graphics::Text::new(self.piece.as_str());
-        let text = text.set_font(ext_ctx.font, graphics::Scale::uniform(50.0));
-        let location =
-            na::Point2::from(self.pos) + na::Vector2::new(square_size * 0.42, square_size * 0.25);
-        let color = match self.piece.color {
-            Color::Black => color::BLACK,
-            Color::White => color::WHITE,
-        };
-        graphics::draw(ctx, text, (location, color))
     }
 }
 
