@@ -21,6 +21,9 @@ const DEBUG_LAYOUT: bool = false;
 const DEFAULT_SCALE: f32 = 20.0;
 const DONTCARE: f32 = -999.0;
 
+const MIN_TIME_BETWEEN_MOVES: f32 = 1.0;
+const HARD_AI_MAX_DEPTH: usize = 6;
+
 #[allow(unused)]
 pub mod color {
     use ggez::graphics::Color;
@@ -305,14 +308,14 @@ impl TitleScreen {
             let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
                 0 => None,
                 1 => Some(Box::new(RandomPlayer {})),
-                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                2 => Some(Box::new(TreeSearchPlayer::new(HARD_AI_MAX_DEPTH))),
                 _ => unreachable!(),
             };
 
             let black_ai: Option<Box<dyn AIPlayer>> = match self.black_selector.selected {
                 0 => None,
                 1 => Some(Box::new(RandomPlayer {})),
-                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                2 => Some(Box::new(TreeSearchPlayer::new(HARD_AI_MAX_DEPTH))),
                 _ => unreachable!(),
             };
             *screen_transition = ScreenTransition::StartGame(white_ai, black_ai);
@@ -357,6 +360,7 @@ pub struct Grid {
     // If this is None, then use a human player. Otherwise, use the listed AI player
     ai_black: Option<Box<dyn AIPlayer>>,
     ai_white: Option<Box<dyn AIPlayer>>,
+    time_since_last_move: f32,
     // TODO: maybe make most of this UI stuff into its own struct?
     // Handles drawing the sidebar UI
     sidebar: GameSidebar,
@@ -401,6 +405,7 @@ impl Grid {
             board,
             ai_black: None,
             ai_white: None,
+            time_since_last_move: 0.0,
             sidebar: GameSidebar {
                 restart: Button::fit_to_text(
                     ctx,
@@ -535,6 +540,7 @@ impl Grid {
         // let board = Board::from_string_vec(board);
         let board = Board::default();
         self.board = BoardState::new(board);
+        self.time_since_last_move = 0.0;
         self.grid.drop_locations = vec![];
         self.grid.last_move = None;
         self.grid.animated_board =
@@ -545,23 +551,34 @@ impl Grid {
         self.sidebar
             .upd8(ctx, ext_ctx, &self.board, self.ui_state());
 
-        // Take AI turn, if need be
+        // Take AI turn, if it isn't game over and it has been at least MIN_TIME_BETWEEN_MOVES
         if !self.board.game_over() {
             let ai = match self.board.current_player {
                 Color::White => &mut self.ai_white,
                 Color::Black => &mut self.ai_black,
             };
+            // If we have an AI and the AI is ready, take the move if we have waited some
+            // minimum time. This is done to limit fast AIs from spam moving
             if let Some(ai) = ai {
                 if let std::task::Poll::Ready((start, end)) =
                     ai.next_move(&self.board, self.board.current_player)
                 {
-                    self.board.check_turn(start, end).expect(&format!(
-                        "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
-                        self.board.current_player, start, end, self.board
-                    ));
-                    Self::take_turn(&mut self.board, &mut self.grid, start, end);
+                    if self.time_since_last_move >= MIN_TIME_BETWEEN_MOVES {
+                        self.board.check_turn(start, end).expect(&format!(
+                            "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
+                            self.board.current_player, start, end, self.board
+                        ));
+                        Self::take_turn(
+                            &mut self.board,
+                            &mut self.grid,
+                            &mut self.time_since_last_move,
+                            start,
+                            end,
+                        );
+                    }
                 }
-                // If this move would require the AI to promote a piece, then do it
+                // If this move would require the AI to promote a piece, then ask
+                // the AI to promote the piece.
                 if let Some(coord) = self.board.need_promote() {
                     let piece = ai.next_promote(&self.board);
                     if let std::task::Poll::Ready(piece) = piece {
@@ -580,6 +597,8 @@ impl Grid {
 
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
+
+        self.time_since_last_move += ggez::timer::delta(ctx).as_secs_f32();
     }
 
     fn mouse_down_upd8(&mut self, mouse_pos: mint::Point2<f32>) {
@@ -607,7 +626,15 @@ impl Grid {
                     let start = dragging.unwrap();
                     let end = drop_loc.unwrap();
                     if self.board.check_turn(start, end).is_ok() {
-                        Self::take_turn(&mut self.board, &mut self.grid, start, end);
+                        // We don't ratelimit how fast humans can move since it's really unlikely they'll
+                        // move too fast for the other player to see
+                        Self::take_turn(
+                            &mut self.board,
+                            &mut self.grid,
+                            &mut self.time_since_last_move,
+                            start,
+                            end,
+                        );
                     }
                 }
             }
@@ -637,11 +664,18 @@ impl Grid {
     }
 
     // Move the piece from start to end and update the last move/animation boards
-    fn take_turn(board: &mut BoardState, grid: &mut GridUI, start: BoardCoord, end: BoardCoord) {
+    fn take_turn(
+        board: &mut BoardState,
+        grid: &mut GridUI,
+        time_since_last_move: &mut f32,
+        start: BoardCoord,
+        end: BoardCoord,
+    ) {
         // Update grid first here because we want grid to work off of the state
         // of board _before_ we make the actual move
         grid.take_turn(board, start, end);
         board.take_turn(start, end);
+        *time_since_last_move = 0.0;
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
