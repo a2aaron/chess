@@ -58,10 +58,7 @@ impl AIPlayer for MinOptPlayer {
         // opponent now has and track best move so far
         for (start, end) in my_moves {
             let mut board = board.clone();
-            board.take_turn(start, end).expect(&format!(
-                "Expected {:?} -> {:?} to be a legal move!",
-                start, end
-            ));
+            board.take_turn(start, end);
             let opponent_moves = board.board.get_all_moves(player.opposite());
             let score = opponent_moves.len();
 
@@ -230,16 +227,11 @@ impl TreeSearch {
         let mut i = 0;
         for (start, end) in moves {
             let mut next_position = position.clone();
-            next_position.take_turn(start, end).expect(&format!(
-                "Expected {:?} -> {:?} to be a legal move!",
-                start, end
-            ));
+            next_position.take_turn(start, end);
             // TODO: This really should get a real analysis, but for now, assuming the
             // player or ourself always promos to queen is an ok compromise.
             if let Some(coord) = next_position.need_promote() {
-                next_position
-                    .promote(coord, PieceType::Queen)
-                    .expect("Expected promotion to be legal!");
+                next_position.promote(coord, PieceType::Queen);
             }
 
             let (score, _, _, _) =

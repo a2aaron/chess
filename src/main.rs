@@ -1,8 +1,4 @@
-mod ai;
-mod board;
-mod layout;
-mod rect;
-mod screen;
+use chess::screen;
 
 use ggez::conf;
 use ggez::event;

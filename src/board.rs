@@ -42,32 +42,44 @@ impl BoardState {
         }
     }
 
-    /// Attempt to move the piece located at `start` to `end`. This function
-    /// returns `Ok()` if the move was successful and `Err` if it was not.
+    pub fn check_turn(&self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
+        use MoveType::*;
+
+        if self.board.pawn_needs_promotion().is_some() {
+            return Err("A pawn needs to be promoted");
+        }
+
+        match move_type(&self.board, start, end) {
+            Castle(color, side) => self.board.can_castle(color, side),
+            Normal | Lunge => self.board.check_move(self.current_player, start, end),
+            EnPassant(side) => self.board.check_enpassant(self.current_player, start, side),
+        }
+    }
+
+    /// Move the piece located at `start` to `end`. This function panics if the
+    /// move would be illegal, so you should check the move first with `check_turn`
     /// It also sets `current_player` to the opposite color and handles the
     /// "just_lunged" pawn flags.
     /// A pawn needs promotion then this function always fails. You should
     /// call `promote` on the pawn.
     #[cfg_attr(feature = "perf", flame)]
-    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> Result<(), &'static str> {
+    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) {
         use Color::*;
         use MoveType::*;
 
-        debug_assert!(self.board.pawn_needs_promotion().is_none());
+        debug_assert!(self.check_turn(start, end).is_ok());
 
         #[cfg(feature = "perf")]
         let guard = fire::start_guard("move check + apply");
 
         match move_type(&self.board, start, end) {
             Castle(color, side) => {
-                self.board.can_castle(color, side)?;
                 // Clear the just lunged flags _after_ checking the move is valid
                 // That way, invalid moves don't try to clear the flag.
                 self.board.clear_just_lunged();
                 self.board.castle(color, side);
             }
             Normal => {
-                self.board.check_move(self.current_player, start, end)?;
                 self.board.clear_just_lunged();
                 if let Some(captured_piece) = self.get(end).0 {
                     match captured_piece.color {
@@ -78,17 +90,11 @@ impl BoardState {
                 self.board.move_piece(start, end)
             }
             Lunge => {
-                // A lunge is just a special case for a normal move, so we don't
-                // really do anything cool here
-                self.board.check_move(self.current_player, start, end)?;
                 // Clear the old lunge flag before the new one
                 self.board.clear_just_lunged();
                 self.board.lunge(start);
             }
             EnPassant(side) => {
-                self.board
-                    .check_enpassant(self.current_player, start, side)?;
-
                 if let Some(captured_piece) = self.get(end).0 {
                     match captured_piece.color {
                         Black => self.dead_black.push(captured_piece),
@@ -121,21 +127,28 @@ impl BoardState {
 
         #[cfg(feature = "perf")]
         flame::end("checkmate update");
-
-        Ok(())
     }
 
     pub fn need_promote(&self) -> Option<BoardCoord> {
         return self.board.pawn_needs_promotion();
     }
 
-    /// Attempt to promote the pawn.
-    pub fn promote(&mut self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
+    /// Checks if the promotion is legal. This function returns Err if there is
+    /// no piece to promote to or if the promotion would be illegal.
+    pub fn check_promote(&self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
+        // TODO: remove this if?
         if self.need_promote().is_none() {
             return Err("No pawn needs to be promoted at this time");
         }
 
-        self.board.check_promote(coord, piece)?;
+        self.board.check_promote(coord, piece)
+    }
+
+    /// Promotes the pawn. This function panics if the promotion is illegal. This
+    /// function also handles updating the checkmate state and current player
+    pub fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
+        debug_assert!(self.check_promote(coord, piece).is_ok());
+
         self.board.promote_pawn(coord, piece);
 
         use Color::*;
@@ -146,7 +159,6 @@ impl BoardState {
 
         // Update the checkmate status
         self.checkmate = self.board.checkmate_state(self.current_player);
-        Ok(())
     }
 
     /// Return the list of valid moves for current player at the coordinate
@@ -1222,9 +1234,42 @@ pub enum BoardSide {
     Kingside,
 }
 
+// TODO: maybe unify this with the below MoveType enum. Kinda hacky
+pub enum MoveOrCastle {
+    Move(BoardCoord, BoardCoord),
+    Castle(BoardCoord, BoardCoord, BoardCoord, BoardCoord),
+    EnPassant(BoardCoord, BoardCoord, BoardCoord),
+}
+
+pub fn move_or_castle(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveOrCastle {
+    match move_type(board, start, end) {
+        MoveType::Castle(color, board_side) => {
+            let (rook_start, rook_end) = match (color, board_side) {
+                (Color::White, BoardSide::Queenside) => (BoardCoord(0, 0), BoardCoord(3, 0)),
+                (Color::White, BoardSide::Kingside) => (BoardCoord(7, 0), BoardCoord(5, 0)),
+                (Color::Black, BoardSide::Queenside) => (BoardCoord(0, 7), BoardCoord(3, 7)),
+                (Color::Black, BoardSide::Kingside) => (BoardCoord(7, 7), BoardCoord(5, 7)),
+            };
+            MoveOrCastle::Castle(start, end, rook_start, rook_end)
+        }
+        MoveType::EnPassant(side) => match side {
+            BoardSide::Queenside => {
+                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 - 1, start.1))
+            }
+            BoardSide::Kingside => {
+                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 + 1, start.1))
+            }
+        },
+        _ => MoveOrCastle::Move(start, end),
+    }
+}
+
 enum MoveType {
     Castle(Color, BoardSide),
     Normal,
+    // A "queenside" enpassant is defined as the attacking pawn moving towards the
+    // queen's side of the board (the x coordinate decreases), and vice versa for
+    // "kingside" enpassant
     EnPassant(BoardSide),
     Lunge,
 }
