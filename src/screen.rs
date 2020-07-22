@@ -6,6 +6,8 @@ use crate::layout::*;
 use crate::rect::*;
 use crate::{hstack, vstack};
 
+use rand::Rng;
+
 use ggez::event::{EventHandler, MouseButton};
 use ggez::graphics::{self, DrawParam, Rect, Text};
 use ggez::input;
@@ -17,9 +19,15 @@ pub const SCREEN_WIDTH: f32 = 800.0;
 pub const SCREEN_HEIGHT: f32 = 600.0;
 
 const DEBUG_LAYOUT: bool = false;
+const DEBUG_RESTART: bool = true;
 
 const DEFAULT_SCALE: f32 = 20.0;
 const DONTCARE: f32 = -999.0;
+
+const MIN_TIME_BETWEEN_MOVES: f32 = 1.0;
+const DEFAULT_ANIMATION_LENGTH: f32 = 0.22;
+const DEFAULT_PREDELAY: f32 = 0.3;
+const HARD_AI_MAX_DEPTH: usize = 6;
 
 #[allow(unused)]
 pub mod color {
@@ -305,14 +313,14 @@ impl TitleScreen {
             let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
                 0 => None,
                 1 => Some(Box::new(RandomPlayer {})),
-                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                2 => Some(Box::new(TreeSearchPlayer::new(HARD_AI_MAX_DEPTH))),
                 _ => unreachable!(),
             };
 
             let black_ai: Option<Box<dyn AIPlayer>> = match self.black_selector.selected {
                 0 => None,
                 1 => Some(Box::new(RandomPlayer {})),
-                2 => Some(Box::new(TreeSearchPlayer::new(6))),
+                2 => Some(Box::new(TreeSearchPlayer::new(HARD_AI_MAX_DEPTH))),
                 _ => unreachable!(),
             };
             *screen_transition = ScreenTransition::StartGame(white_ai, black_ai);
@@ -357,7 +365,7 @@ pub struct Grid {
     // If this is None, then use a human player. Otherwise, use the listed AI player
     ai_black: Option<Box<dyn AIPlayer>>,
     ai_white: Option<Box<dyn AIPlayer>>,
-    // TODO: maybe make most of this UI stuff into its own struct?
+    time_since_last_move: f32,
     // Handles drawing the sidebar UI
     sidebar: GameSidebar,
 }
@@ -401,6 +409,7 @@ impl Grid {
             board,
             ai_black: None,
             ai_white: None,
+            time_since_last_move: 0.0,
             sidebar: GameSidebar {
                 restart: Button::fit_to_text(
                     ctx,
@@ -535,37 +544,44 @@ impl Grid {
         // let board = Board::from_string_vec(board);
         let board = Board::default();
         self.board = BoardState::new(board);
-        self.grid.drop_locations = vec![];
-        self.grid.last_move = None;
-        self.grid.animated_board =
-            AnimatedBoard::new(&self.board, self.grid.square_size, self.grid.offset);
+        self.time_since_last_move = 0.0;
+        self.grid.new_game(&self.board);
     }
 
     fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
-        self.sidebar
-            .upd8(ctx, ext_ctx, &self.board, self.ui_state());
+        self.sidebar.upd8(ctx, ext_ctx, &self.board);
 
-        // Take AI turn, if need be
+        // Take AI turn, if it isn't game over and it has been at least MIN_TIME_BETWEEN_MOVES
         if !self.board.game_over() {
             let ai = match self.board.current_player {
                 Color::White => &mut self.ai_white,
                 Color::Black => &mut self.ai_black,
             };
+            // If we have an AI and the AI is ready, take the move if we have waited some
+            // minimum time. This is done to limit fast AIs from spam moving
             if let Some(ai) = ai {
                 if let std::task::Poll::Ready((start, end)) =
                     ai.next_move(&self.board, self.board.current_player)
                 {
-                    self.board.check_turn(start, end).expect(&format!(
-                        "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
-                        self.board.current_player, start, end, self.board
-                    ));
-                    Self::take_turn(&mut self.board, &mut self.grid, start, end);
+                    if self.time_since_last_move >= MIN_TIME_BETWEEN_MOVES {
+                        self.board.check_turn(start, end).expect(&format!(
+                            "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
+                            self.board.current_player, start, end, self.board
+                        ));
+                        Self::take_turn(
+                            &mut self.board,
+                            &mut self.grid,
+                            &mut self.time_since_last_move,
+                            start,
+                            end,
+                        );
+                    }
                 }
-                // If this move would require the AI to promote a piece, then do it
+                // If this move would require the AI to promote a piece, then ask
+                // the AI to promote the piece.
                 if let Some(coord) = self.board.need_promote() {
                     let piece = ai.next_promote(&self.board);
                     if let std::task::Poll::Ready(piece) = piece {
-                        // TODO: Find a way to unify this with the human player code
                         self.board.check_promote(coord, piece).expect(&format!(
                             "{} AI made illegal promote: {:?}\nboard:\n{:?}",
                             self.board.current_player, piece, self.board
@@ -580,6 +596,8 @@ impl Grid {
 
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
+
+        self.time_since_last_move += ggez::timer::delta(ctx).as_secs_f32();
     }
 
     fn mouse_down_upd8(&mut self, mouse_pos: mint::Point2<f32>) {
@@ -601,13 +619,24 @@ impl Grid {
                     // On a mouse up, try moving the held piece to the current mouse position
                     let dragging = self.grid.to_grid_coord(mouse.last_down.unwrap());
                     let drop_loc = self.grid.to_grid_coord(mouse.pos);
+                    // This indicates that the mouse isn't actually holding a piece
+                    // or would be dropped outside of the grid
                     if drop_loc.is_err() || dragging.is_err() {
-                        return;
-                    }
-                    let start = dragging.unwrap();
-                    let end = drop_loc.unwrap();
-                    if self.board.check_turn(start, end).is_ok() {
-                        Self::take_turn(&mut self.board, &mut self.grid, start, end);
+                        // do nothing, there's isn't an attempted move here
+                    } else {
+                        let start = dragging.unwrap();
+                        let end = drop_loc.unwrap();
+                        if self.board.check_turn(start, end).is_ok() {
+                            // We don't ratelimit how fast humans can move since it's really unlikely they'll
+                            // move too fast for the other player to see
+                            Self::take_turn(
+                                &mut self.board,
+                                &mut self.grid,
+                                &mut self.time_since_last_move,
+                                start,
+                                end,
+                            );
+                        }
                     }
                 }
             }
@@ -628,6 +657,9 @@ impl Grid {
                 }
             }
         }
+        if DEBUG_RESTART && self.sidebar.restart.pressed(mouse.pos) {
+            self.new_game();
+        }
         self.grid.drop_locations = vec![];
     }
 
@@ -637,11 +669,18 @@ impl Grid {
     }
 
     // Move the piece from start to end and update the last move/animation boards
-    fn take_turn(board: &mut BoardState, grid: &mut GridUI, start: BoardCoord, end: BoardCoord) {
+    fn take_turn(
+        board: &mut BoardState,
+        grid: &mut GridUI,
+        time_since_last_move: &mut f32,
+        start: BoardCoord,
+        end: BoardCoord,
+    ) {
         // Update grid first here because we want grid to work off of the state
         // of board _before_ we make the actual move
         grid.take_turn(board, start, end);
         board.take_turn(start, end);
+        *time_since_last_move = 0.0;
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -693,7 +732,6 @@ struct GridUI {
     // Size of a single square, in pixels
     square_size: f32,
     // Offset of the entire screen from the upper left.
-    // TODO: this can probably be removed.
     offset: na::Vector2<f32>,
     // The list of locations the currently held piece can be placed. If this
     // vector is empty, then either no piece is being held or there are no places
@@ -712,13 +750,19 @@ struct GridUI {
 /// This struct mostly handles drawing the chess board, its pieces, square
 /// highlights, and handling screenspace/boardspace convesions
 impl GridUI {
+    fn new_game(&mut self, board: &BoardState) {
+        self.drop_locations = vec![];
+        self.last_move = None;
+        self.animated_board = AnimatedBoard::new(board, self.square_size, self.offset);
+    }
+
     fn upd8(&mut self, ctx: &mut Context) {
         // probably another thing here????
         self.animated_board.upd8(ctx);
     }
 
     fn upd8_drop_locations(&mut self, mouse_pos: mint::Point2<f32>, board: &BoardState) {
-        let coord = self.to_grid_coord(mouse_pos);
+        let coord = to_grid_coord(self.square_size, self.offset, mouse_pos);
         match coord {
             Err(_) => {
                 self.drop_locations = vec![];
@@ -784,7 +828,7 @@ impl GridUI {
         }
 
         // Color the currently highlighted square red if it is the player's piece or if the player is dragging it
-        let pos = self.to_grid_coord(mouse.pos).ok();
+        let pos = to_grid_coord(self.square_size, self.offset, mouse.pos).ok();
         if let Some(coord) = pos {
             let same_color = board.get(coord).is_color(board.current_player);
             let is_dragging = mouse.dragging.is_some();
@@ -799,7 +843,7 @@ impl GridUI {
 
         // Color the dragged square green
         if let Some(dragging) = mouse.dragging {
-            let dragging = self.to_grid_coord(dragging);
+            let dragging = to_grid_coord(self.square_size, self.offset, dragging);
             if let Ok(coord) = dragging {
                 let offset: na::Point2<f32> = self.to_screen_coord(coord) + self.offset;
                 graphics::draw(ctx, &hollow_rect, (offset, color::GREEN))?;
@@ -855,107 +899,12 @@ impl GridUI {
         }
     }
 
-    /// Returns a tuple of where the given screen space coordinates would end up
-    /// on the grid. This function returns Err if the point would be off the grid.
     fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
-        let offset_coords: na::Point2<f32> = na::Point2::from(screen_coords) - self.offset;
-        let grid_x = (offset_coords.x / self.square_size).floor() as i8;
-        let grid_y = (offset_coords.y / self.square_size).floor() as i8;
-        BoardCoord::new((grid_x, 7 - grid_y))
+        to_grid_coord(self.square_size, self.offset, screen_coords)
     }
 
-    /// Returns the upper left corner of the square located at `board_coords`
-    fn to_screen_coord(&self, board_coords: BoardCoord) -> na::Point2<f32> {
-        na::Point2::new(
-            board_coords.0 as f32 * self.square_size,
-            (7 - board_coords.1) as f32 * self.square_size,
-        )
-    }
-}
-
-/// This struct handles the drawing and state maitence of the sidebar. Note that
-/// this struct does not actually handle button functionality--this is done
-/// up in Grid
-#[derive(Debug)]
-struct GameSidebar {
-    // Restart and main menu buttons
-    restart: Button,
-    main_menu: Button,
-    // Promotion buttons. Note that this is reused for both white's and black's side
-    // and we just move the buttons around as needed. The PieceType tells what
-    // piece the pawn will promote to.
-    promote_buttons: Vec<(Button, PieceType)>,
-    // Displays who's turn it is and if there is check/checkmate/etc or not
-    status: TextBox,
-    // Lists the dead piece for each player.
-    dead_black: TextBox,
-    dead_white: TextBox,
-}
-
-impl GameSidebar {
-    fn upd8(
-        &mut self,
-        ctx: &mut Context,
-        ext_ctx: &mut ExtendedContext,
-        board: &BoardState,
-        ui_state: UIState,
-    ) {
-        // Update status message
-        let player_str = board.current_player.as_str();
-
-        let status_text = match board.checkmate {
-            CheckmateState::Stalemate => "The game has ended!\nStalemate!".to_owned(),
-            CheckmateState::InsuffientMaterial => {
-                "The game has ended!\nInsuffient material!".to_owned()
-            }
-            CheckmateState::Checkmate => {
-                ["The game has ended!\n", player_str, " is in checkmate!"].concat()
-            }
-            CheckmateState::Check => [player_str, " is in check!"].concat(),
-            CheckmateState::Normal => [player_str, " to move."].concat(),
-        };
-        self.status.text = text(status_text, ext_ctx.font, 25.0);
-
-        self.dead_black.text = text(piece_vec_str(&board.dead_black), ext_ctx.font, 30.0);
-        self.dead_white.text = text(piece_vec_str(&board.dead_white), ext_ctx.font, 30.0);
-
-        // Update buttons
-        use UIState::*;
-        match ui_state {
-            Normal => (),
-            GameOver => {
-                self.main_menu.upd8(ctx);
-                self.restart.upd8(ctx);
-            }
-            Promote(_) => {
-                for (button, _) in &mut self.promote_buttons {
-                    button.upd8(ctx);
-                }
-            }
-        }
-    }
-
-    fn draw(&self, ctx: &mut Context, ui_state: UIState) -> GameResult<()> {
-        // Draw UI buttons, if applicable
-        use UIState::*;
-        match ui_state {
-            Normal => (),
-            GameOver => {
-                self.restart.draw(ctx)?;
-                self.main_menu.draw(ctx)?;
-            }
-            Promote(_) => {
-                for (button, _) in &self.promote_buttons {
-                    button.draw(ctx)?;
-                }
-            }
-        }
-
-        self.status.draw(ctx)?;
-        self.dead_black.draw(ctx)?;
-        self.dead_white.draw(ctx)?;
-
-        Ok(())
+    fn to_screen_coord(&self, board_coord: BoardCoord) -> na::Point2<f32> {
+        na::Point2::from(to_screen_coord(self.square_size, board_coord))
     }
 }
 
@@ -976,9 +925,24 @@ impl AnimatedBoard {
         for i in 0..8 {
             for j in 0..8 {
                 let coord = BoardCoord(i, j);
-                let screen_coord = ani_board.to_screen_coord(coord);
-                let piece = AnimatedPiece::from_tile(screen_coord, board.get(coord));
-                if let Some(piece) = piece {
+                if let Some(piece) = board.get(coord).0 {
+                    let end = to_screen_coord(square_size, coord);
+                    let start = match piece.color {
+                        Color::Black => mint::Point2::<f32> {
+                            x: end.x,
+                            y: -100.0,
+                        },
+                        Color::White => mint::Point2::<f32> {
+                            x: end.x,
+                            y: SCREEN_HEIGHT + 100.0,
+                        },
+                    };
+                    let piece = AnimatedPiece::new(
+                        start,
+                        end,
+                        piece,
+                        rand::thread_rng().gen_range(0.4, 0.8),
+                    );
                     ani_board.pieces.insert(coord, piece);
                 }
             }
@@ -1014,21 +978,29 @@ impl AnimatedBoard {
         self.pieces.get_mut(&coord).unwrap().piece.piece = piece;
     }
 
-    /// Returns a tuple of where the given screen space coordinates would end up
-    /// on the grid. This function returns Err if the point would be off the grid.
-    fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
-        let offset_coords = na::Point2::from(screen_coords) - na::Vector2::from(self.offset);
-        let grid_x = (offset_coords.x / self.square_size).floor() as i8;
-        let grid_y = (offset_coords.y / self.square_size).floor() as i8;
-        BoardCoord::new((grid_x, 7 - grid_y))
+    fn to_screen_coord(&self, board_coord: BoardCoord) -> mint::Point2<f32> {
+        to_screen_coord(self.square_size, board_coord)
     }
+}
 
-    /// Returns the upper left corner of the square located at `board_coords`
-    fn to_screen_coord(&self, board_coords: BoardCoord) -> mint::Point2<f32> {
-        mint::Point2 {
-            x: board_coords.0 as f32 * self.square_size,
-            y: (7 - board_coords.1) as f32 * self.square_size,
-        }
+/// Returns a tuple of where the given screen space coordinates would end up
+/// on the grid. This function returns Err if the point would be off the grid.
+fn to_grid_coord<V: Into<na::Vector2<f32>>>(
+    square_size: f32,
+    offset: V,
+    screen_coords: mint::Point2<f32>,
+) -> Result<BoardCoord, &'static str> {
+    let offset_coords = na::Point2::from(screen_coords) - offset.into();
+    let grid_x = (offset_coords.x / square_size).floor() as i8;
+    let grid_y = (offset_coords.y / square_size).floor() as i8;
+    BoardCoord::new((grid_x, 7 - grid_y))
+}
+
+/// Returns the upper left corner of the square located at `board_coords`
+fn to_screen_coord(square_size: f32, board_coord: BoardCoord) -> mint::Point2<f32> {
+    mint::Point2 {
+        x: board_coord.0 as f32 * square_size,
+        y: (7 - board_coord.1) as f32 * square_size,
     }
 }
 
@@ -1038,41 +1010,52 @@ struct AnimatedPiece {
     pos: mint::Point2<f32>,
     start: mint::Point2<f32>,
     end: mint::Point2<f32>,
+    // how far into the animation this piece is. Should be reset to zero on
+    // a new set target
     timer: f32,
+    ani_length: f32,
+    pre_delay: f32,
+    ease: Ease,
 }
 
 impl AnimatedPiece {
-    fn from_tile(coord: mint::Point2<f32>, tile: &Tile) -> Option<AnimatedPiece> {
-        match tile.0 {
-            None => None,
-            Some(piece) => Some(AnimatedPiece {
-                pos: coord,
-                start: coord,
-                end: coord,
-                piece,
-                timer: 1.0,
-            }),
+    fn from_piece(coord: mint::Point2<f32>, piece: Piece) -> AnimatedPiece {
+        AnimatedPiece::new(coord, coord, piece, DEFAULT_ANIMATION_LENGTH)
+    }
+
+    fn new(
+        start: mint::Point2<f32>,
+        end: mint::Point2<f32>,
+        piece: Piece,
+        ani_length: f32,
+    ) -> AnimatedPiece {
+        AnimatedPiece {
+            pos: start,
+            start,
+            end,
+            piece,
+            timer: 0.0,
+            ani_length,
+            pre_delay: DEFAULT_PREDELAY,
+            ease: Ease::InOutBack,
         }
     }
 
     fn upd8(&mut self, dt: f32) {
-        fn ease(start: f32, end: f32, percent: f32) -> f32 {
-            let c4 = (2.0 * std::f32::consts::PI) / 3.0;
-            let percent = 2.0f32.powf(-10.0 * percent) * ((percent * 10.0 - 0.75) * c4).sin() + 1.0;
-            return start * (1.0 - percent) + end * percent;
-        }
-
         self.timer += dt;
         // limit percent to range [0.0, 1.0]
-        let percent = 1.0f32.min(self.timer / 1.0);
-        self.pos.x = ease(self.start.x, self.end.x, percent);
-        self.pos.y = ease(self.start.y, self.end.y, percent);
+        let percent = ((self.timer - self.pre_delay) / self.ani_length).clamp(0.0, 1.0);
+        self.pos.x = self.ease.interpolate(self.start.x, self.end.x, percent);
+        self.pos.y = self.ease.interpolate(self.start.y, self.end.y, percent);
     }
 
     fn set_target(&mut self, target: mint::Point2<f32>) {
         self.start = self.pos;
         self.end = target;
         self.timer = 0.0;
+        self.ani_length = DEFAULT_ANIMATION_LENGTH;
+        self.pre_delay = 0.0;
+        self.ease = Ease::InOutCubic;
     }
 
     fn draw(
@@ -1090,6 +1073,132 @@ impl AnimatedPiece {
             Color::White => color::WHITE,
         };
         graphics::draw(ctx, text, (location, color))
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+enum Ease {
+    Linear,
+    OutQuadratic,
+    InOutCubic,
+    OutElastic,
+    OutBack,
+    InOutBack,
+}
+
+impl Ease {
+    fn ease(&self, x: f32) -> f32 {
+        use Ease::*;
+        match self {
+            Linear => x,
+            OutQuadratic => 1.0 - (1.0 - x) * (1.0 - x),
+            InOutCubic => {
+                if x < 0.5 {
+                    4.0 * x * x * x
+                } else {
+                    1.0 - (-2.0 * x + 2.0).powf(3.0) / 2.0
+                }
+            }
+            OutElastic => {
+                let c4 = (2.0 * std::f32::consts::PI) / 3.0;
+                2.0f32.powf(-10.0 * x) * ((x * 10.0 - 0.75) * c4).sin() + 1.0
+            }
+            OutBack => {
+                let c1 = 1.70158;
+                let c3 = c1 + 1.0;
+                1.0 + c3 * (x - 1.0).powf(3.0) + c1 * (x - 1.0).powf(2.0)
+            }
+            InOutBack => {
+                let c1 = 1.70158;
+                let c2 = c1 * 1.525;
+                if x < 0.5 {
+                    ((2.0 * x).powf(2.0) * ((c2 + 1.0) * 2.0 * x - c2)) / 2.0
+                } else {
+                    ((2.0 * x - 2.0).powf(2.0) * ((c2 + 1.0) * (x * 2.0 - 2.0) + c2) + 2.0) / 2.0
+                }
+            }
+        }
+    }
+    fn interpolate(&self, start: f32, end: f32, percent: f32) -> f32 {
+        let percent = self.ease(percent);
+        return start * (1.0 - percent) + end * percent;
+    }
+}
+
+/// This struct handles the drawing and state maitence of the sidebar. Note that
+/// this struct does not actually handle button functionality--this is done
+/// up in Grid
+#[derive(Debug)]
+struct GameSidebar {
+    // Restart and main menu buttons
+    restart: Button,
+    main_menu: Button,
+    // Promotion buttons. Note that this is reused for both white's and black's side
+    // and we just move the buttons around as needed. The PieceType tells what
+    // piece the pawn will promote to.
+    promote_buttons: Vec<(Button, PieceType)>,
+    // Displays who's turn it is and if there is check/checkmate/etc or not
+    status: TextBox,
+    // Lists the dead piece for each player.
+    dead_black: TextBox,
+    dead_white: TextBox,
+}
+
+impl GameSidebar {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext, board: &BoardState) {
+        // Update status message
+        let player_str = board.current_player.as_str();
+
+        let status_text = match board.checkmate {
+            CheckmateState::Stalemate => "The game has ended!\nStalemate!".to_owned(),
+            CheckmateState::InsuffientMaterial => {
+                "The game has ended!\nInsuffient material!".to_owned()
+            }
+            CheckmateState::Checkmate => {
+                ["The game has ended!\n", player_str, " is in checkmate!"].concat()
+            }
+            CheckmateState::Check => [player_str, " is in check!"].concat(),
+            CheckmateState::Normal => [player_str, " to move."].concat(),
+        };
+        self.status.text = text(status_text, ext_ctx.font, 25.0);
+
+        self.dead_black.text = text(piece_vec_str(&board.dead_black), ext_ctx.font, 30.0);
+        self.dead_white.text = text(piece_vec_str(&board.dead_white), ext_ctx.font, 30.0);
+
+        // Update buttons
+        self.main_menu.upd8(ctx);
+        self.restart.upd8(ctx);
+
+        for (button, _) in &mut self.promote_buttons {
+            button.upd8(ctx);
+        }
+    }
+
+    fn draw(&self, ctx: &mut Context, ui_state: UIState) -> GameResult<()> {
+        // Draw UI buttons, if applicable
+        use UIState::*;
+        match ui_state {
+            Normal => (),
+            GameOver => {
+                self.restart.draw(ctx)?;
+                self.main_menu.draw(ctx)?;
+            }
+            Promote(_) => {
+                for (button, _) in &self.promote_buttons {
+                    button.draw(ctx)?;
+                }
+            }
+        }
+
+        self.status.draw(ctx)?;
+        self.dead_black.draw(ctx)?;
+        self.dead_white.draw(ctx)?;
+
+        if DEBUG_RESTART {
+            self.restart.draw(ctx)?;
+        }
+
+        Ok(())
     }
 }
 
