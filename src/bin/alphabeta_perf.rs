@@ -39,9 +39,7 @@ fn main() {
         }
     }
 
-    board
-        .take_turn(start, end)
-        .expect("Expected move to be legal!");
+    board.take_turn(start, end);
 
     let duration = now.elapsed();
 

@@ -51,16 +51,22 @@ pub mod color {
     pub const TRANS_PURPLE: Color = Color::new(1.0, 0.0, 1.0, 0.5);
 }
 
+/// The entire game struct. This struct implements ggez's `EventHandler` and
+/// orchestrates howeverthing should work.
 #[derive(Debug)]
 pub struct Game {
+    /// which screen is currently active
     screen: ScreenState,
+    /// which screen to transition to
     transition: ScreenTransition,
     title_screen: TitleScreen,
     grid: Grid,
+    /// The extended context, containing image, font, and mouse data
     ext_ctx: ExtendedContext,
 }
 
 impl Game {
+    /// Create a new Game from the context. This loads a font.
     pub fn new(ctx: &mut Context) -> Game {
         let font = graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap();
         let mut ext_ctx = ExtendedContext::new(ctx, font);
@@ -90,7 +96,7 @@ impl EventHandler for Game {
             ScreenTransition::QuitGame => ggez::event::quit(ctx),
             ScreenTransition::None => (),
         }
-        // Now that we have done it, we set out transition to none
+        // Now that we have done it, clear the transition state
         self.transition = ScreenTransition::None;
 
         match self.screen {
@@ -105,6 +111,7 @@ impl EventHandler for Game {
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx, graphics::BLACK);
+        // Mouse cursor
         let circle = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
@@ -118,18 +125,9 @@ impl EventHandler for Game {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.ext_ctx.font)?,
             ScreenState::InGame => self.grid.draw(ctx, &self.ext_ctx)?,
         }
-        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
-        // FPS counter
-        // let text = format!("{:.0}", ggez::timer::fps(ctx));
-        // let location = na::Point2::new(0.0, 0.0);
-        // draw_text(
-        //     ctx,
-        //     text,
-        //     self.ext_ctx.font,
-        //     DEFAULT_SCALE,
-        //     (location, color::RED),
-        // )?;
+        // Ensure we draw the mouse cursor over everything else
+        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
@@ -179,11 +177,17 @@ impl EventHandler for Game {
         }
     }
 }
+
+/// This struct acts similarly to Context. It stores information that there should
+/// normally only be one of (such as fonts, mouse state, etc) and provides
+/// some useful debugging features.
 #[derive(Debug)]
 pub struct ExtendedContext {
     mouse_state: MouseState,
+    /// font for in game text
     font: graphics::Font,
-    debug_render: Vec<(Rect, graphics::Color)>, // the debug rectangles. Rendered in red on top of everything else.
+    /// debug rectangles. Rendered in the chosen color on top of everything else.
+    debug_render: Vec<(Rect, graphics::Color)>,
 }
 
 impl ExtendedContext {
@@ -196,11 +200,17 @@ impl ExtendedContext {
     }
 }
 
+/// An extension to ggez's MouseContext. It stores information such as the last
+/// mouse down and mouse up positions, as well as the current "drag" of the mouse.
 #[derive(Debug)]
 pub struct MouseState {
-    last_down: Option<mint::Point2<f32>>, // The position of the last mouse down, if it exists
-    last_up: Option<mint::Point2<f32>>,   // The position of the last mouse up, if it exists
-    dragging: Option<mint::Point2<f32>>,  // Some(coord) if the mouse is pressed, else None
+    // The position of the last mouse down, if it exists
+    last_down: Option<mint::Point2<f32>>,
+    // The position of the last mouse up, if it exists
+    last_up: Option<mint::Point2<f32>>,
+    // Some(coord) if the mouse is pressed, else None
+    dragging: Option<mint::Point2<f32>>,
+    // The current position of the mouse
     pos: mint::Point2<f32>,
 }
 
@@ -309,6 +319,7 @@ impl TitleScreen {
         mouse_pos: mint::Point2<f32>,
         screen_transition: &mut ScreenTransition,
     ) {
+        /// On game start, get which AIs should be used
         if self.start_game.pressed(mouse_pos) {
             let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
                 0 => None,
@@ -342,6 +353,7 @@ impl TitleScreen {
     }
 }
 
+/// Which screen the game should transition to.
 #[derive(Debug)]
 pub enum ScreenTransition {
     None,
@@ -350,6 +362,7 @@ pub enum ScreenTransition {
     QuitGame,
 }
 
+/// Which screen the game is current on.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ScreenState {
     TitleScreen,

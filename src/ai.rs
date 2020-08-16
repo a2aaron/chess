@@ -10,8 +10,19 @@ use crate::board::*;
 
 type Move = (BoardCoord, BoardCoord);
 
+/// This trait describes a computer player. An AIPlayer will have `next_move`
+/// called with a certain board position and a player, and is expected to return
+/// a legal move. Note that the return type is a `Poll`, so the AIPlayer may
+/// spawn a thread if it takes a while to search for the right move. While the
+/// player searches, it is expected to return `Poll::Pending`. If this is the case
+/// `next_move` will be re-called intermittenly until it returns Poll::Ready
 pub trait AIPlayer: std::fmt::Debug {
+    /// Given a board, this function should return the next move the AI intends
+    /// to play.
     fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<Move>;
+    /// Given a board that requires a promotion for a pawn, return what piece the
+    /// pawn should be promoted to. By default, this is always a queen, but can
+    /// be manually overridden if desired.
     fn next_promote(&mut self, _board: &BoardState) -> Poll<PieceType> {
         Poll::Ready(PieceType::Queen)
     }
@@ -90,12 +101,20 @@ pub struct TreeSearchPlayer {
     // If none, then no thread is currently running.
     reciever: Option<mpsc::Receiver<((i32, Move), TreeSearch)>>,
 }
+
+/// Helper struct for TreeSearchPlayer containing all of the relevant state and
+/// searhc parameters
 #[derive(Debug, Clone)]
 struct TreeSearch {
+    /// Max number of plys to search.
     max_depth: usize,
-    // Unfortunately, AIs can not dance, so this is always empty
+    /// The "expected" sequence of moves, has length of `max_depth`
     principal_variation: Vec<Move>,
+    /// For debugging. Counts how many branches were "generated" (were seen by
+    /// `get_all_moves()`)
     total_branches: usize,
+    /// For debugging. Counts how many branches were actually searched (has `search()`
+    /// called on them)
     branches_searched: usize,
 }
 
@@ -107,9 +126,11 @@ impl AIPlayer for TreeSearchPlayer {
                 let (sender, reciever) = mpsc::channel();
                 // We have to do these clones because the board needs to outlive
                 // the thread and Rust can't prove that board actually does that
-                // (This would cause problems, for example, if there was code in screen.rs
-                // that modified the board while the thread ran!)
+                // (This would cause problems, for example, if there was code in
+                // screen.rs that modified the board while the thread ran!)
                 // Thus, we must work on a copy of the board.
+                // TODO: Consider not using a BoardState internally--instead something
+                // faster like a bitboard.
                 let board = board.clone();
                 let mut treesearch = self.state.clone();
                 std::thread::spawn(move || {
@@ -274,13 +295,6 @@ impl TreeSearch {
         self.principal_variation[current_depth] = best_move;
 
         self.branches_searched += i;
-        // println!(
-        //     "{} principal moves: {:?} {:?} (at depth: {})",
-        //     "\t".repeat(current_depth),
-        //     best_move,
-        //     second_best_move,
-        //     current_depth,
-        // );
 
         (best_score, best_move, alpha, beta)
     }
