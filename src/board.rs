@@ -63,7 +63,7 @@ impl BoardState {
     /// A pawn needs promotion then this function always fails. You should
     /// call `promote` on the pawn.
     #[cfg_attr(feature = "perf", flame)]
-    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) {
+    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> MoveOrCapture {
         use Color::*;
         use MoveType::*;
 
@@ -71,6 +71,8 @@ impl BoardState {
 
         #[cfg(feature = "perf")]
         let guard = fire::start_guard("move check + apply");
+
+        let mut move_or_capture = MoveOrCapture::Move(start, end);
 
         match move_type(&self.board, start, end) {
             Castle(color, side) => {
@@ -86,6 +88,7 @@ impl BoardState {
                         Black => self.dead_black.push(captured_piece),
                         White => self.dead_white.push(captured_piece),
                     }
+                    move_or_capture = MoveOrCapture::Capture(start, end, captured_piece);
                 }
                 self.board.move_piece(start, end)
             }
@@ -127,6 +130,8 @@ impl BoardState {
 
         #[cfg(feature = "perf")]
         flame::end("checkmate update");
+
+        move_or_capture
     }
 
     pub fn need_promote(&self) -> Option<BoardCoord> {
@@ -1232,6 +1237,11 @@ impl fmt::Display for MoveList {
 pub enum BoardSide {
     Queenside,
     Kingside,
+}
+
+pub enum MoveOrCapture {
+    Move(BoardCoord, BoardCoord),
+    Capture(BoardCoord, BoardCoord, Piece),
 }
 
 // TODO: maybe unify this with the below MoveType enum. Kinda hacky

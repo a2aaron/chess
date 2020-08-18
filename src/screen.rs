@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::ai::*;
 use crate::board::*;
 use crate::layout::*;
+use crate::particle;
 use crate::rect::*;
 use crate::{hstack, vstack};
 
@@ -100,6 +101,10 @@ impl EventHandler for Game {
 
         self.ext_ctx.mouse_state.pos = ggez::input::mouse::position(ctx);
 
+        for particle_sys in &mut self.ext_ctx.particles {
+            particle_sys.upd8();
+        }
+
         Ok(())
     }
 
@@ -120,16 +125,10 @@ impl EventHandler for Game {
         }
         graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
-        // FPS counter
-        // let text = format!("{:.0}", ggez::timer::fps(ctx));
-        // let location = na::Point2::new(0.0, 0.0);
-        // draw_text(
-        //     ctx,
-        //     text,
-        //     self.ext_ctx.font,
-        //     DEFAULT_SCALE,
-        //     (location, color::RED),
-        // )?;
+        // Draw particles in ext_ctx
+        for particle_sys in &mut self.ext_ctx.particles {
+            particle_sys.draw(ctx)?;
+        }
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
@@ -141,6 +140,7 @@ impl EventHandler for Game {
                     .unwrap();
             graphics::draw(ctx, &rect, DrawParam::default())?;
         }
+
         graphics::present(ctx)
     }
 
@@ -174,7 +174,7 @@ impl EventHandler for Game {
                 .mouse_up_upd8(mint::Point2 { x, y }, &mut self.transition),
             ScreenState::InGame => {
                 self.grid
-                    .mouse_up_upd8(ctx, &self.ext_ctx.mouse_state, &mut self.transition)
+                    .mouse_up_upd8(ctx, &mut self.ext_ctx, &mut self.transition)
             }
         }
     }
@@ -183,6 +183,7 @@ impl EventHandler for Game {
 pub struct ExtendedContext {
     mouse_state: MouseState,
     font: graphics::Font,
+    particles: Vec<particle::ParticleSystem>,
     debug_render: Vec<(Rect, graphics::Color)>, // the debug rectangles. Rendered in red on top of everything else.
 }
 
@@ -191,6 +192,7 @@ impl ExtendedContext {
         ExtendedContext {
             mouse_state: MouseState::new(ctx),
             font,
+            particles: vec![],
             debug_render: vec![],
         }
     }
@@ -569,6 +571,8 @@ impl Grid {
                             self.board.current_player, start, end, self.board
                         ));
                         Self::take_turn(
+                            ctx,
+                            &mut ext_ctx.particles,
                             &mut self.board,
                             &mut self.grid,
                             &mut self.time_since_last_move,
@@ -608,10 +612,11 @@ impl Grid {
 
     fn mouse_up_upd8(
         &mut self,
-        _sctx: &mut Context,
-        mouse: &MouseState,
+        ctx: &mut Context,
+        ext_ctx: &mut ExtendedContext,
         transition: &mut ScreenTransition,
     ) {
+        let mouse = &ext_ctx.mouse_state;
         use UIState::*;
         match self.ui_state() {
             Normal => {
@@ -630,6 +635,8 @@ impl Grid {
                             // We don't ratelimit how fast humans can move since it's really unlikely they'll
                             // move too fast for the other player to see
                             Self::take_turn(
+                                ctx,
+                                &mut ext_ctx.particles,
                                 &mut self.board,
                                 &mut self.grid,
                                 &mut self.time_since_last_move,
@@ -670,6 +677,8 @@ impl Grid {
 
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(
+        ctx: &mut Context,
+        particles: &mut Vec<particle::ParticleSystem>,
         board: &mut BoardState,
         grid: &mut GridUI,
         time_since_last_move: &mut f32,
@@ -679,8 +688,13 @@ impl Grid {
         // Update grid first here because we want grid to work off of the state
         // of board _before_ we make the actual move
         grid.take_turn(board, start, end);
-        board.take_turn(start, end);
+        // Set the time since the last move so the AI does not move immediately.
         *time_since_last_move = 0.0;
+        // on capture, add a particle effect
+        if let MoveOrCapture::Capture(start, end, piece) = board.take_turn(start, end) {
+            let end = grid.to_screen_coord_centered(end);
+            particles.push(particle::ParticleSystem::new(ctx, end));
+        }
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -905,6 +919,11 @@ impl GridUI {
 
     fn to_screen_coord(&self, board_coord: BoardCoord) -> na::Point2<f32> {
         na::Point2::from(to_screen_coord(self.square_size, board_coord))
+    }
+
+    fn to_screen_coord_centered(&self, board_coord: BoardCoord) -> na::Point2<f32> {
+        self.to_screen_coord(board_coord)
+            + na::Vector2::new(self.square_size / 2.0, self.square_size / 2.0)
     }
 }
 
