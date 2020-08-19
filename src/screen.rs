@@ -895,17 +895,16 @@ impl BoardView {
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(&mut self, board: &BoardState, start: BoardCoord, end: BoardCoord) {
         self.last_move = Some((start, end));
-        match move_or_castle(&board.board, start, end) {
-            MoveOrCastle::Move(start, end) => {
-                self.animated_board.move_piece(start, end);
-            }
-            MoveOrCastle::Castle(start, end, rook_start, rook_end) => {
-                self.animated_board.move_piece(start, end);
-                self.animated_board.move_piece(rook_start, rook_end);
-            }
-            MoveOrCastle::EnPassant(start, end, remove) => {
-                self.animated_board.move_piece(start, end);
-                self.animated_board.remove(remove);
+        let actions = basic_actions(&board.board, start, end);
+        for action in actions {
+            match action {
+                BasicAction::Move { start, end } => {
+                    self.animated_board.move_piece(start, end);
+                }
+                BasicAction::Remove { coord } => {
+                    self.animated_board.remove(coord);
+                }
+                BasicAction::Change { .. } => unimplemented!(),
             }
         }
     }

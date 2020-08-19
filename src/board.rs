@@ -51,7 +51,7 @@ impl BoardState {
 
         match move_type(&self.board, start, end) {
             Castle(color, side) => self.board.can_castle(color, side),
-            Normal | Lunge => self.board.check_move(self.current_player, start, end),
+            Normal | Lunge | Capture => self.board.check_move(self.current_player, start, end),
             EnPassant(side) => self.board.check_enpassant(self.current_player, start, side),
         }
     }
@@ -63,7 +63,7 @@ impl BoardState {
     /// A pawn needs promotion then this function always fails. You should
     /// call `promote` on the pawn.
     #[cfg_attr(feature = "perf", flame)]
-    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) -> MoveOrCapture {
+    pub fn take_turn(&mut self, start: BoardCoord, end: BoardCoord) {
         use Color::*;
         use MoveType::*;
 
@@ -71,8 +71,6 @@ impl BoardState {
 
         #[cfg(feature = "perf")]
         let guard = fire::start_guard("move check + apply");
-
-        let mut move_or_capture = MoveOrCapture::Move(start, end);
 
         match move_type(&self.board, start, end) {
             Castle(color, side) => {
@@ -83,13 +81,19 @@ impl BoardState {
             }
             Normal => {
                 self.board.clear_just_lunged();
-                if let Some(captured_piece) = self.get(end).0 {
-                    match captured_piece.color {
-                        Black => self.dead_black.push(captured_piece),
-                        White => self.dead_white.push(captured_piece),
-                    }
-                    move_or_capture = MoveOrCapture::Capture(start, end, captured_piece);
+                self.board.move_piece(start, end)
+            }
+            Capture => {
+                self.board.clear_just_lunged();
+                let captured_piece = self
+                    .get(end)
+                    .0
+                    .expect("Expected piece to be present at end on a capture!");
+                match captured_piece.color {
+                    Black => self.dead_black.push(captured_piece),
+                    White => self.dead_white.push(captured_piece),
                 }
+
                 self.board.move_piece(start, end)
             }
             Lunge => {
@@ -98,11 +102,20 @@ impl BoardState {
                 self.board.lunge(start);
             }
             EnPassant(side) => {
-                if let Some(captured_piece) = self.get(end).0 {
-                    match captured_piece.color {
-                        Black => self.dead_black.push(captured_piece),
-                        White => self.dead_white.push(captured_piece),
-                    }
+                use BoardSide::*;
+                let captured_coord = match side {
+                    Kingside => BoardCoord(start.0 + 1, start.1),
+                    Queenside => BoardCoord(start.0 - 1, start.1),
+                };
+
+                // Add the captured pawn to the dead piece list
+                let captured_piece = self
+                    .get(captured_coord)
+                    .0
+                    .expect(&format!("Expected pawn at {:?}", captured_coord));
+                match captured_piece.color {
+                    Black => self.dead_black.push(captured_piece),
+                    White => self.dead_white.push(captured_piece),
                 }
 
                 self.board.enpassant(start, end);
@@ -130,8 +143,6 @@ impl BoardState {
 
         #[cfg(feature = "perf")]
         flame::end("checkmate update");
-
-        move_or_capture
     }
 
     pub fn need_promote(&self) -> Option<BoardCoord> {
@@ -1240,44 +1251,10 @@ pub enum BoardSide {
     Kingside,
 }
 
-pub enum MoveOrCapture {
-    Move(BoardCoord, BoardCoord),
-    Capture(BoardCoord, BoardCoord, Piece),
-}
-
-// TODO: maybe unify this with the below MoveType enum. Kinda hacky
-pub enum MoveOrCastle {
-    Move(BoardCoord, BoardCoord),
-    Castle(BoardCoord, BoardCoord, BoardCoord, BoardCoord),
-    EnPassant(BoardCoord, BoardCoord, BoardCoord),
-}
-
-pub fn move_or_castle(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveOrCastle {
-    match move_type(board, start, end) {
-        MoveType::Castle(color, board_side) => {
-            let (rook_start, rook_end) = match (color, board_side) {
-                (Color::White, BoardSide::Queenside) => (BoardCoord(0, 0), BoardCoord(3, 0)),
-                (Color::White, BoardSide::Kingside) => (BoardCoord(7, 0), BoardCoord(5, 0)),
-                (Color::Black, BoardSide::Queenside) => (BoardCoord(0, 7), BoardCoord(3, 7)),
-                (Color::Black, BoardSide::Kingside) => (BoardCoord(7, 7), BoardCoord(5, 7)),
-            };
-            MoveOrCastle::Castle(start, end, rook_start, rook_end)
-        }
-        MoveType::EnPassant(side) => match side {
-            BoardSide::Queenside => {
-                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 - 1, start.1))
-            }
-            BoardSide::Kingside => {
-                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 + 1, start.1))
-            }
-        },
-        _ => MoveOrCastle::Move(start, end),
-    }
-}
-
 enum MoveType {
     Castle(Color, BoardSide),
     Normal,
+    Capture,
     // A "queenside" enpassant is defined as the attacking pawn moving towards the
     // queen's side of the board (the x coordinate decreases), and vice versa for
     // "kingside" enpassant
@@ -1312,9 +1289,61 @@ fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
         // while a capture will move onto a nonempty square
         (PieceType::Pawn { .. }, (-1, 1), true) => EnPassant(Queenside),
         (PieceType::Pawn { .. }, (1, 1), true) => EnPassant(Kingside),
+        (_, _, false) => Capture,
         _ => Normal,
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub enum BasicAction {
+    Move { start: BoardCoord, end: BoardCoord },
+    Remove { coord: BoardCoord },
+    Change { coord: BoardCoord, new_piece: Piece },
+}
+
+pub fn basic_actions(board: &Board, start: BoardCoord, end: BoardCoord) -> Vec<BasicAction> {
+    match move_type(board, start, end) {
+        MoveType::Castle(color, board_side) => {
+            let (king_start, king_end) = (start, end);
+            let (rook_start, rook_end) = match (color, board_side) {
+                (Color::White, BoardSide::Queenside) => (BoardCoord(0, 0), BoardCoord(3, 0)),
+                (Color::White, BoardSide::Kingside) => (BoardCoord(7, 0), BoardCoord(5, 0)),
+                (Color::Black, BoardSide::Queenside) => (BoardCoord(0, 7), BoardCoord(3, 7)),
+                (Color::Black, BoardSide::Kingside) => (BoardCoord(7, 7), BoardCoord(5, 7)),
+            };
+            vec![
+                BasicAction::Move {
+                    start: king_start,
+                    end: king_end,
+                },
+                BasicAction::Move {
+                    start: rook_start,
+                    end: rook_end,
+                },
+            ]
+        }
+        MoveType::Normal => vec![BasicAction::Move { start, end }],
+        MoveType::Capture => vec![
+            BasicAction::Remove { coord: end },
+            BasicAction::Move { start, end },
+        ],
+        MoveType::EnPassant(side) => {
+            let captured_pawn = match side {
+                BoardSide::Queenside => BoardCoord(start.0 - 1, start.1),
+
+                BoardSide::Kingside => BoardCoord(start.0 + 1, start.1),
+            };
+            vec![
+                BasicAction::Remove {
+                    coord: captured_pawn,
+                },
+                BasicAction::Move { start, end },
+            ]
+        }
+        MoveType::Lunge => vec![BasicAction::Move { start, end }],
+    }
+}
+
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
