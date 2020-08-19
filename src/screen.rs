@@ -361,7 +361,7 @@ pub enum ScreenState {
 #[derive(Debug)]
 pub struct Grid {
     // Handles drawing the grid stuff
-    grid: GridUI,
+    grid: BoardView,
     // The actual underling board that runs the chess board.
     board: BoardState,
     // If this is None, then use a human player. Otherwise, use the listed AI player
@@ -400,12 +400,12 @@ impl Grid {
         let board = BoardState::new(Board::default());
         let offset: na::Vector2<f32> = na::Vector2::new(DONTCARE, DONTCARE);
         let mut grid = Grid {
-            grid: GridUI {
+            grid: BoardView {
                 square_size,
                 offset,
                 drop_locations: vec![],
                 animated_board: AnimatedBoard::new(&board, square_size, offset),
-                background_mesh: GridUI::background_mesh(ctx, square_size),
+                background_mesh: BoardView::background_mesh(ctx, square_size),
                 last_move: None,
             },
             board,
@@ -670,7 +670,7 @@ impl Grid {
         self.grid.drop_locations = vec![];
     }
 
-    fn promote(board: &mut BoardState, grid: &mut GridUI, coord: BoardCoord, piece: PieceType) {
+    fn promote(board: &mut BoardState, grid: &mut BoardView, coord: BoardCoord, piece: PieceType) {
         grid.promote(coord, piece);
         board.promote(coord, piece);
     }
@@ -680,21 +680,18 @@ impl Grid {
         ctx: &mut Context,
         particles: &mut Vec<particle::ParticleSystem>,
         board: &mut BoardState,
-        grid: &mut GridUI,
+        board_view: &mut BoardView,
         time_since_last_move: &mut f32,
         start: BoardCoord,
         end: BoardCoord,
     ) {
-        // Update grid first here because we want grid to work off of the state
+        // Update the view first here because we want it to work off of the state
         // of board _before_ we make the actual move
-        grid.take_turn(board, start, end);
+        board_view.take_turn(board, start, end);
         // Set the time since the last move so the AI does not move immediately.
         *time_since_last_move = 0.0;
-        // on capture, add a particle effect
-        if let MoveOrCapture::Capture(start, end, piece) = board.take_turn(start, end) {
-            let end = grid.to_screen_coord_centered(end);
-            particles.push(particle::ParticleSystem::new(ctx, end));
-        }
+
+        board.take_turn(start, end);
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -742,7 +739,7 @@ enum UIState {
 }
 
 #[derive(Debug)]
-struct GridUI {
+struct BoardView {
     // Size of a single square, in pixels
     square_size: f32,
     // Offset of the entire screen from the upper left.
@@ -763,7 +760,7 @@ struct GridUI {
 
 /// This struct mostly handles drawing the chess board, its pieces, square
 /// highlights, and handling screenspace/boardspace convesions
-impl GridUI {
+impl BoardView {
     fn new_game(&mut self, board: &BoardState) {
         self.drop_locations = vec![];
         self.last_move = None;
