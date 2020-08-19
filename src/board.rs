@@ -246,7 +246,7 @@ impl Board {
                 let x = j;
                 let y = i + (8 - str_board.len());
                 let tile = match piece.chars().nth(1).unwrap() {
-                    'P' => Tile::new(color, Pawn(false)),
+                    'P' => Tile::new(color, Pawn { just_lunged: false }),
                     'N' => Tile::new(color, Knight),
                     'B' => Tile::new(color, Bishop),
                     'R' => Tile::new(color, Rook),
@@ -351,7 +351,7 @@ impl Board {
             PieceType::King => {
                 list.0.append(&mut self.castle_locations(player));
             }
-            PieceType::Pawn(_) => list.0.append(&mut self.enpassant_locations(player, coord)),
+            PieceType::Pawn { .. } => list.0.append(&mut self.enpassant_locations(player, coord)),
             _ => {}
         }
 
@@ -542,7 +542,7 @@ impl Board {
         match capturing_pawn.0 {
             Some(Piece {
                 color: c,
-                piece: PieceType::Pawn(_),
+                piece: PieceType::Pawn { .. },
                 has_moved: _,
             }) if c == player => (),
             _ => return Err("Capturing piece must be a pawn of the player's color"),
@@ -551,7 +551,7 @@ impl Board {
         match captured_pawn.0 {
             Some(Piece {
                 color: c,
-                piece: PieceType::Pawn(true),
+                piece: PieceType::Pawn { just_lunged: true },
                 has_moved: _,
             }) if c != player => (),
             _ => {
@@ -738,7 +738,7 @@ impl Board {
                 let check_coord = BoardCoord(x, y);
                 if self
                     .get(check_coord)
-                    .is(color.opposite(), PieceType::Pawn(false))
+                    .is(color.opposite(), PieceType::Pawn { just_lunged: false })
                 {
                     return false;
                 }
@@ -793,7 +793,7 @@ impl Board {
                 match tile {
                     None => continue,
                     Some(piece) => match piece.piece {
-                        Pawn(_) | Rook | Queen => return false,
+                        Pawn { .. } | Rook | Queen => return false,
                         Knight => num_bishops += 1,
                         Bishop => num_knights += 1,
                         // we will assume that the board always has two kings
@@ -845,7 +845,7 @@ impl Board {
             let black_coord = BoardCoord(i, 0);
             if self
                 .get(black_coord)
-                .is(Color::Black, PieceType::Pawn(false))
+                .is(Color::Black, PieceType::Pawn { just_lunged: false })
             {
                 return Some(black_coord);
             }
@@ -853,7 +853,7 @@ impl Board {
             let white_coord = BoardCoord(i, 7);
             if self
                 .get(white_coord)
-                .is(Color::White, PieceType::Pawn(false))
+                .is(Color::White, PieceType::Pawn { just_lunged: false })
             {
                 return Some(white_coord);
             }
@@ -867,7 +867,6 @@ impl Board {
     /// - on the last rank of its side
     /// - being promoted to a piece that is not a pawn or a king
     pub fn check_promote(&self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
-        use PieceType::*;
         let pawn = self.get(coord);
         let color = match coord.1 {
             0 => Color::Black,
@@ -877,13 +876,13 @@ impl Board {
             }
         };
 
-        if !pawn.is(color, Pawn(false)) {
+        if !pawn.is(color, PieceType::Pawn { just_lunged: false }) {
             return Err("Can only promote a pawn of opposite color at this position.");
         }
 
         match piece {
-            Pawn(_) => Err("Can not promote to a pawn"),
-            King => Err("Can not promote to a king"),
+            PieceType::Pawn { .. } => Err("Can not promote to a pawn"),
+            PieceType::King => Err("Can not promote to a king"),
             _ => Ok(()),
         }
     }
@@ -1021,7 +1020,7 @@ fn get_move_list_ignore_check(board: &Board, coord: BoardCoord, out: &mut MoveLi
     match piece {
         None => (),
         Some(piece) => match piece.piece {
-            Pawn(_) => check_pawn(board, coord, piece.color, out),
+            Pawn { .. } => check_pawn(board, coord, piece.color, out),
             Knight | King => {
                 check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece), out)
             }
@@ -1141,7 +1140,7 @@ fn get_los(piece: PieceType) -> Box<dyn Iterator<Item = LosIterator>> {
         Rook => Box::new(get_los_rook()),
         Bishop => Box::new(get_los_bishop()),
         Queen => Box::new(get_los_rook().chain(get_los_bishop())),
-        Pawn(_) | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
+        Pawn { .. } | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
     }
 }
 
@@ -1202,7 +1201,9 @@ fn get_move_deltas(piece: PieceType) -> Vec<BoardCoord> {
             BoardCoord(-1, 0),
             BoardCoord(-1, 1),
         ],
-        Pawn(_) | Rook | Bishop | Queen => panic!("Expected a Knight or a King, got {:?}", piece),
+        Pawn { .. } | Rook | Bishop | Queen => {
+            panic!("Expected a Knight or a King, got {:?}", piece)
+        }
     }
 }
 
@@ -1306,11 +1307,11 @@ fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
     match (piece.piece, delta, empty_end_pos) {
         (PieceType::King, (-2, 0), _) => Castle(piece.color, Queenside),
         (PieceType::King, (2, 0), _) => Castle(piece.color, Kingside),
-        (PieceType::Pawn(_), (0, 2), _) => Lunge,
+        (PieceType::Pawn { .. }, (0, 2), _) => Lunge,
         // An enpassant move will always attempt to move into an empty square
         // while a capture will move onto a nonempty square
-        (PieceType::Pawn(_), (-1, 1), true) => EnPassant(Queenside),
-        (PieceType::Pawn(_), (1, 1), true) => EnPassant(Kingside),
+        (PieceType::Pawn { .. }, (-1, 1), true) => EnPassant(Queenside),
+        (PieceType::Pawn { .. }, (1, 1), true) => EnPassant(Kingside),
         _ => Normal,
     }
 }
@@ -1347,7 +1348,7 @@ impl Tile {
     /// Set `just_lunged` flag on Pawn if the tile is a pawn. Else, do nothing.
     pub fn set_just_lunged(&mut self, set: bool) {
         if let Some(piece) = &mut self.0 {
-            if let PieceType::Pawn(just_lunged) = &mut piece.piece {
+            if let PieceType::Pawn { just_lunged } = &mut piece.piece {
                 *just_lunged = set;
             }
         }
@@ -1454,7 +1455,7 @@ impl fmt::Display for Color {
 /// lunged (moved two spaces) on the previous turn.S
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PieceType {
-    Pawn(bool),
+    Pawn { just_lunged: bool },
     Knight,
     Bishop,
     Rook,
@@ -1466,7 +1467,7 @@ impl PieceType {
     pub fn as_str(&self) -> &'static str {
         use PieceType::*;
         match self {
-            Pawn(_) => PAWN_STR,
+            Pawn { .. } => PAWN_STR,
             Knight => KNIGHT_STR,
             Bishop => BISHOP_STR,
             Rook => ROOK_STR,
@@ -1480,7 +1481,7 @@ impl fmt::Display for PieceType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use PieceType::*;
         match self {
-            Pawn(_) => write!(f, "P"),
+            Pawn { .. } => write!(f, "P"),
             Knight => write!(f, "N"),
             Bishop => write!(f, "B"),
             Rook => write!(f, "R"),
@@ -1512,7 +1513,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(3, 3),
-            Tile::new(Color::White, PieceType::Pawn(false)),
+            Tile::new(Color::White, PieceType::Pawn { just_lunged: false }),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -1531,7 +1532,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(3, 3),
-            Tile::new(Color::White, PieceType::Pawn(false)),
+            Tile::new(Color::White, PieceType::Pawn { just_lunged: false }),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -1544,7 +1545,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(0, 0),
-            Tile::new(Color::White, PieceType::Pawn(false)),
+            Tile::new(Color::White, PieceType::Pawn { just_lunged: false }),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);

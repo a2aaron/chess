@@ -435,7 +435,7 @@ impl TreeSearch {
                 // It seems that this causes the bot to value the bishops a bit more than
                 // the knights.
                 let (piece_score, position_score) = match piece.piece {
-                    Pawn(_) => (100, PAWN_POSITION_TABLE[offset_x][offset_y]),
+                    Pawn { .. } => (100, PAWN_POSITION_TABLE[offset_x][offset_y]),
                     Knight => (320, KNIGHT_POSITION_TABLE[offset_x][offset_y]),
                     Bishop => (330, BISHOP_POSITION_TABLE[offset_x][offset_y]),
                     Rook => (500, ROOK_POSITION_TABLE[offset_x][offset_y]),
@@ -464,7 +464,7 @@ fn value(tile: &Tile) -> i32 {
     match tile.0 {
         None => -1,
         Some(piece) => match piece.piece {
-            Pawn(_) => 1,
+            Pawn { .. } => 1,
             Knight => 2,
             Bishop => 2,
             Rook => 3,
