@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 use crate::ai::*;
 use crate::board::*;
@@ -924,19 +925,35 @@ impl BoardView {
 }
 
 #[derive(Debug)]
+struct AnimationEvent {
+    action: BasicAction,
+    // What piece to apply the animation on. This is an index into `pieces`
+    id: usize,
+    // How long this animation event takes place.
+    animation_duration: f32,
+    // How long to wait before adding the next event.
+    delay_duration: f32,
+}
+
+#[derive(Debug)]
 struct AnimatedBoard {
     square_size: f32,
     offset: na::Vector2<f32>,
-    pieces: HashMap<BoardCoord, AnimatedPiece>,
+    // A hashmap of all of the _alive_ pieces on the board and their current position
+    // Note that this hash map stores indicies into `pieces`.
+    coords: HashMap<BoardCoord, usize>,
+    // The actual pieces. This vector should not be changed after initalization
+    // Piece which end up "dead" should not be removed from this vector, instead
+    // remove it from coords.
+    pieces: Vec<AnimatedPiece>,
+    event_queue: VecDeque<AnimationEvent>,
+    active_events: Vec<AnimationEvent>,
 }
 
 impl AnimatedBoard {
     fn new(board: &BoardState, square_size: f32, offset: na::Vector2<f32>) -> AnimatedBoard {
-        let mut ani_board = AnimatedBoard {
-            square_size,
-            offset,
-            pieces: HashMap::new(),
-        };
+        let mut coords = HashMap::with_capacity(32);
+        let mut pieces = Vec::with_capacity(32);
         for i in 0..8 {
             for j in 0..8 {
                 let coord = BoardCoord(i, j);
@@ -958,39 +975,50 @@ impl AnimatedBoard {
                         piece,
                         rand::thread_rng().gen_range(0.4, 0.8),
                     );
-                    ani_board.pieces.insert(coord, piece);
+                    pieces.push(piece);
+                    let id = pieces.len() - 1;
+                    coords.insert(coord, id);
                 }
             }
         }
-        ani_board
+        AnimatedBoard {
+            square_size,
+            offset,
+            coords,
+            pieces,
+            active_events: Vec::with_capacity(3),
+            event_queue: VecDeque::with_capacity(3),
+        }
     }
 
     fn upd8(&mut self, ctx: &mut Context) {
-        for piece in &mut self.pieces.values_mut() {
-            piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
+        for &id in self.coords.values() {
+            self.pieces[id].upd8(ggez::timer::delta(ctx).as_secs_f32());
         }
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        for piece in self.pieces.values() {
-            piece.draw(ctx, ext_ctx, self.square_size)?;
+        for &id in self.coords.values() {
+            self.pieces[id].draw(ctx, ext_ctx, self.square_size)?;
         }
         draw_text_workaround(ctx);
         Ok(())
     }
 
     fn remove(&mut self, coord: BoardCoord) {
-        self.pieces.remove(&coord);
+        self.coords.remove(&coord);
     }
 
     fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        let mut piece = self.pieces.remove(&start).unwrap();
-        piece.set_target(self.to_screen_coord(end));
-        self.pieces.insert(end, piece);
+        let id = self.coords.remove(&start).unwrap();
+        let target = self.to_screen_coord(end);
+        self.pieces[id].set_target(target);
+        self.coords.insert(end, id);
     }
 
     fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
-        self.pieces.get_mut(&coord).unwrap().piece.piece = piece;
+        let id = *self.coords.get(&coord).unwrap();
+        self.pieces[id].set_piece(piece);
     }
 
     fn to_screen_coord(&self, board_coord: BoardCoord) -> mint::Point2<f32> {
@@ -1088,6 +1116,10 @@ impl AnimatedPiece {
             Color::White => color::WHITE,
         };
         graphics::draw(ctx, text, (location, color))
+    }
+
+    fn set_piece(&mut self, piece: PieceType) {
+        self.piece.piece = piece;
     }
 }
 

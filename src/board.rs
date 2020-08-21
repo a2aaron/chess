@@ -1330,7 +1330,6 @@ pub fn basic_actions(board: &Board, start: BoardCoord, end: BoardCoord) -> Vec<B
         MoveType::EnPassant(side) => {
             let captured_pawn = match side {
                 BoardSide::Queenside => BoardCoord(start.0 - 1, start.1),
-
                 BoardSide::Kingside => BoardCoord(start.0 + 1, start.1),
             };
             vec![
