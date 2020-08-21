@@ -573,7 +573,6 @@ impl Grid {
                         ));
                         Self::take_turn(
                             ctx,
-                            &mut ext_ctx.particles,
                             &mut self.board,
                             &mut self.grid,
                             &mut self.time_since_last_move,
@@ -597,7 +596,7 @@ impl Grid {
             }
         }
 
-        self.grid.upd8(ctx);
+        self.grid.upd8(ctx, ext_ctx);
 
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
@@ -637,7 +636,6 @@ impl Grid {
                             // move too fast for the other player to see
                             Self::take_turn(
                                 ctx,
-                                &mut ext_ctx.particles,
                                 &mut self.board,
                                 &mut self.grid,
                                 &mut self.time_since_last_move,
@@ -679,7 +677,6 @@ impl Grid {
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(
         ctx: &mut Context,
-        particles: &mut Vec<particle::ParticleSystem>,
         board: &mut BoardState,
         board_view: &mut BoardView,
         time_since_last_move: &mut f32,
@@ -768,9 +765,9 @@ impl BoardView {
         self.animated_board = AnimatedBoard::new(board, self.square_size, self.offset);
     }
 
-    fn upd8(&mut self, ctx: &mut Context) {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
         // probably another thing here????
-        self.animated_board.upd8(ctx);
+        self.animated_board.upd8(ctx, ext_ctx);
     }
 
     fn upd8_drop_locations(&mut self, mouse_pos: mint::Point2<f32>, board: &BoardState) {
@@ -906,11 +903,6 @@ impl BoardView {
     fn to_screen_coord(&self, board_coord: BoardCoord) -> na::Point2<f32> {
         na::Point2::from(to_screen_coord(self.square_size, board_coord))
     }
-
-    fn to_screen_coord_centered(&self, board_coord: BoardCoord) -> na::Point2<f32> {
-        self.to_screen_coord(board_coord)
-            + na::Vector2::new(self.square_size / 2.0, self.square_size / 2.0)
-    }
 }
 
 #[derive(Debug)]
@@ -981,7 +973,7 @@ impl AnimatedBoard {
         }
     }
 
-    fn upd8(&mut self, ctx: &mut Context) {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
         for piece in self.pieces.iter_mut().filter(|piece| piece.alive) {
             piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
         }
@@ -1000,8 +992,12 @@ impl AnimatedBoard {
                 BasicAction::Change { piece, .. } => {
                     self.pieces[event.id].set_piecetype(piece);
                 }
-                BasicAction::Remove { .. } => {
+                BasicAction::Remove { coord } => {
                     self.pieces[event.id].alive = false;
+                    ext_ctx.particles.push(particle::ParticleSystem::new(
+                        ctx,
+                        self.to_screen_coord_centered(coord),
+                    ))
                 }
             }
             self.timer = event.delay_duration;
@@ -1018,13 +1014,13 @@ impl AnimatedBoard {
 
     fn queue_action(&mut self, action: BasicAction, delay_duration: f32) {
         let event = match action {
-            BasicAction::Move { start, end } => AnimationEvent {
+            BasicAction::Move { start, end: _ } => AnimationEvent {
                 action,
                 id: *self.coords.get(&start).unwrap(),
                 animation_duration: DEFAULT_ANIMATION_LENGTH,
                 delay_duration,
             },
-            BasicAction::Change { coord, piece } => AnimationEvent {
+            BasicAction::Change { coord, piece: _ } => AnimationEvent {
                 action,
                 id: *self.coords.get(&coord).unwrap(),
                 animation_duration: 0.0,
@@ -1107,6 +1103,11 @@ impl AnimatedBoard {
 
     fn to_screen_coord(&self, board_coord: BoardCoord) -> mint::Point2<f32> {
         to_screen_coord(self.square_size, board_coord)
+    }
+
+    fn to_screen_coord_centered(&self, coord: BoardCoord) -> na::Point2<f32> {
+        na::Point2::from(self.to_screen_coord(coord))
+            + na::Vector2::new(self.square_size / 2.0, self.square_size / 2.0)
     }
 }
 
