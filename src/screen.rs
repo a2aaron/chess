@@ -896,18 +896,7 @@ impl BoardView {
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(&mut self, board: &BoardState, start: BoardCoord, end: BoardCoord) {
         self.last_move = Some((start, end));
-        let actions = basic_actions(&board.board, start, end);
-        for action in actions {
-            match action {
-                BasicAction::Move { start, end } => {
-                    self.animated_board.move_piece(start, end);
-                }
-                BasicAction::Remove { coord } => {
-                    self.animated_board.remove(coord);
-                }
-                BasicAction::Change { .. } => unimplemented!(),
-            }
-        }
+        self.animated_board.take_turn(board, start, end);
     }
 
     fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
@@ -926,8 +915,9 @@ impl BoardView {
 
 #[derive(Debug)]
 struct AnimationEvent {
+    // Only the variant here matters.
     action: BasicAction,
-    // What piece to apply the animation on. This is an index into `pieces`
+    // what piece to apply the action to
     id: usize,
     // How long this animation event takes place.
     animation_duration: f32,
@@ -946,8 +936,8 @@ struct AnimatedBoard {
     // Piece which end up "dead" should not be removed from this vector, instead
     // remove it from coords.
     pieces: Vec<AnimatedPiece>,
+    timer: f32,
     event_queue: VecDeque<AnimationEvent>,
-    active_events: Vec<AnimationEvent>,
 }
 
 impl AnimatedBoard {
@@ -986,39 +976,133 @@ impl AnimatedBoard {
             offset,
             coords,
             pieces,
-            active_events: Vec::with_capacity(3),
+            timer: 0.0,
             event_queue: VecDeque::with_capacity(3),
         }
     }
 
     fn upd8(&mut self, ctx: &mut Context) {
-        for &id in self.coords.values() {
-            self.pieces[id].upd8(ggez::timer::delta(ctx).as_secs_f32());
+        for piece in self.pieces.iter_mut().filter(|piece| piece.alive) {
+            piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
+        }
+
+        self.timer -= ggez::timer::delta(ctx).as_secs_f32();
+        // If it is time to pop something from the queue, do it and execute the action
+        if self.timer <= 0.0 && !self.event_queue.is_empty() {
+            let event = self.event_queue.pop_front().unwrap();
+            println!("Executing event! {:?}", event);
+            println!("Queue: {:?}", self.event_queue);
+            match event.action {
+                BasicAction::Move { start: _, end } => {
+                    let target = self.to_screen_coord(end);
+                    self.pieces[event.id].set_target(target);
+                }
+                BasicAction::Change { piece, .. } => {
+                    self.pieces[event.id].set_piecetype(piece);
+                }
+                BasicAction::Remove { .. } => {
+                    self.pieces[event.id].alive = false;
+                }
+            }
+            self.timer = event.delay_duration;
         }
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        for &id in self.coords.values() {
-            self.pieces[id].draw(ctx, ext_ctx, self.square_size)?;
+        for piece in self.pieces.iter().filter(|piece| piece.alive) {
+            piece.draw(ctx, ext_ctx, self.square_size)?;
         }
         draw_text_workaround(ctx);
         Ok(())
     }
 
-    fn remove(&mut self, coord: BoardCoord) {
-        self.coords.remove(&coord);
-    }
-
-    fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        let id = self.coords.remove(&start).unwrap();
-        let target = self.to_screen_coord(end);
-        self.pieces[id].set_target(target);
-        self.coords.insert(end, id);
+    fn queue_action(&mut self, action: BasicAction, delay_duration: f32) {
+        let event = match action {
+            BasicAction::Move { start, end } => AnimationEvent {
+                action,
+                id: *self.coords.get(&start).unwrap(),
+                animation_duration: DEFAULT_ANIMATION_LENGTH,
+                delay_duration,
+            },
+            BasicAction::Change { coord, piece } => AnimationEvent {
+                action,
+                id: *self.coords.get(&coord).unwrap(),
+                animation_duration: 0.0,
+                delay_duration,
+            },
+            BasicAction::Remove { coord } => AnimationEvent {
+                action,
+                id: *self.coords.get(&coord).unwrap(),
+                animation_duration: 0.0,
+                delay_duration,
+            },
+        };
+        self.event_queue.push_back(event);
     }
 
     fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
-        let id = *self.coords.get(&coord).unwrap();
-        self.pieces[id].set_piece(piece);
+        self.event_queue.push_back(AnimationEvent {
+            action: BasicAction::Change { coord, piece },
+            id: *self.coords.get(&coord).unwrap(),
+            animation_duration: 0.0,
+            delay_duration: 0.0,
+        })
+    }
+
+    fn take_turn(&mut self, board: &BoardState, start: BoardCoord, end: BoardCoord) {
+        // Construct the events to be fired later.
+        match basic_actions(&board.board, start, end) {
+            (action, None) => self.queue_action(action, 0.0),
+            (remove @ BasicAction::Remove { .. }, Some(action)) => {
+                // We move first, then remove the piece after the animation
+                // This is done since otherwise the remove piece will look weird as it disappears instantly
+                self.queue_action(action, DEFAULT_ANIMATION_LENGTH);
+                self.queue_action(remove, 0.0);
+            }
+            (action, Some(action2)) => {
+                self.queue_action(action, 0.0);
+                self.queue_action(action2, 0.0);
+            }
+        }
+
+        // Helper functions to modify the hashmap
+        fn move_piece(coords: &mut HashMap<BoardCoord, usize>, start: BoardCoord, end: BoardCoord) {
+            let id = coords
+                .remove(&start)
+                .expect(format!("Expected piece at {:?} got none", start).as_str());
+            coords.insert(end, id);
+        }
+
+        fn remove(coords: &mut HashMap<BoardCoord, usize>, coord: BoardCoord) {
+            coords
+                .remove(&coord)
+                .expect(format!("Expected piece at {:?} got none", coord).as_str());
+        }
+
+        use MoveTypeCoords::*;
+        // Update interal board representation
+        match move_type_coords(&board.board, start, end) {
+            Normal { start, end } | Capture { start, end } | Lunge { start, end } => {
+                move_piece(&mut self.coords, start, end);
+            }
+            Castle {
+                king_start,
+                king_end,
+                rook_start,
+                rook_end,
+            } => {
+                move_piece(&mut self.coords, king_start, king_end);
+                move_piece(&mut self.coords, rook_start, rook_end);
+            }
+            EnPassant {
+                start,
+                end,
+                captured_pawn,
+            } => {
+                move_piece(&mut self.coords, start, end);
+                remove(&mut self.coords, captured_pawn);
+            }
+        }
     }
 
     fn to_screen_coord(&self, board_coord: BoardCoord) -> mint::Point2<f32> {
@@ -1049,6 +1133,7 @@ fn to_screen_coord(square_size: f32, board_coord: BoardCoord) -> mint::Point2<f3
 
 #[derive(Debug)]
 struct AnimatedPiece {
+    alive: bool,
     piece: Piece,
     pos: mint::Point2<f32>,
     start: mint::Point2<f32>,
@@ -1073,6 +1158,7 @@ impl AnimatedPiece {
         ani_length: f32,
     ) -> AnimatedPiece {
         AnimatedPiece {
+            alive: true,
             pos: start,
             start,
             end,
@@ -1118,7 +1204,7 @@ impl AnimatedPiece {
         graphics::draw(ctx, text, (location, color))
     }
 
-    fn set_piece(&mut self, piece: PieceType) {
+    fn set_piecetype(&mut self, piece: PieceType) {
         self.piece.piece = piece;
     }
 }

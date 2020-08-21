@@ -1,4 +1,5 @@
 #![feature(clamp)]
+#![feature(option_expect_none)]
 
 pub mod ai;
 pub mod board;

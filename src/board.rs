@@ -1251,15 +1251,16 @@ pub enum BoardSide {
     Kingside,
 }
 
+#[derive(Debug, Copy, Clone)]
 enum MoveType {
-    Castle(Color, BoardSide),
     Normal,
     Capture,
+    Lunge,
+    Castle(Color, BoardSide),
     // A "queenside" enpassant is defined as the attacking pawn moving towards the
     // queen's side of the board (the x coordinate decreases), and vice versa for
     // "kingside" enpassant
     EnPassant(BoardSide),
-    Lunge,
 }
 
 /// Returns what kind of move this is, either normal, a castle, or an en passant
@@ -1295,14 +1296,37 @@ fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum BasicAction {
-    Move { start: BoardCoord, end: BoardCoord },
-    Remove { coord: BoardCoord },
-    Change { coord: BoardCoord, new_piece: Piece },
+pub enum MoveTypeCoords {
+    Normal {
+        start: BoardCoord,
+        end: BoardCoord,
+    },
+    Capture {
+        start: BoardCoord,
+        end: BoardCoord,
+    },
+    Lunge {
+        start: BoardCoord,
+        end: BoardCoord,
+    },
+    Castle {
+        king_start: BoardCoord,
+        king_end: BoardCoord,
+        rook_start: BoardCoord,
+        rook_end: BoardCoord,
+    },
+    EnPassant {
+        start: BoardCoord,
+        end: BoardCoord,
+        captured_pawn: BoardCoord,
+    },
 }
 
-pub fn basic_actions(board: &Board, start: BoardCoord, end: BoardCoord) -> Vec<BasicAction> {
-    match move_type(board, start, end) {
+fn to_coords(move_type: MoveType, start: BoardCoord, end: BoardCoord) -> MoveTypeCoords {
+    match move_type {
+        MoveType::Normal => MoveTypeCoords::Normal { start, end },
+        MoveType::Lunge => MoveTypeCoords::Lunge { start, end },
+        MoveType::Capture => MoveTypeCoords::Capture { start, end },
         MoveType::Castle(color, board_side) => {
             let (king_start, king_end) = (start, end);
             let (rook_start, rook_end) = match (color, board_side) {
@@ -1311,35 +1335,76 @@ pub fn basic_actions(board: &Board, start: BoardCoord, end: BoardCoord) -> Vec<B
                 (Color::Black, BoardSide::Queenside) => (BoardCoord(0, 7), BoardCoord(3, 7)),
                 (Color::Black, BoardSide::Kingside) => (BoardCoord(7, 7), BoardCoord(5, 7)),
             };
-            vec![
-                BasicAction::Move {
-                    start: king_start,
-                    end: king_end,
-                },
-                BasicAction::Move {
-                    start: rook_start,
-                    end: rook_end,
-                },
-            ]
+            MoveTypeCoords::Castle {
+                king_start,
+                king_end,
+                rook_start,
+                rook_end,
+            }
         }
-        MoveType::Normal => vec![BasicAction::Move { start, end }],
-        MoveType::Capture => vec![
-            BasicAction::Remove { coord: end },
-            BasicAction::Move { start, end },
-        ],
         MoveType::EnPassant(side) => {
             let captured_pawn = match side {
                 BoardSide::Queenside => BoardCoord(start.0 - 1, start.1),
                 BoardSide::Kingside => BoardCoord(start.0 + 1, start.1),
             };
-            vec![
-                BasicAction::Remove {
-                    coord: captured_pawn,
-                },
-                BasicAction::Move { start, end },
-            ]
+            MoveTypeCoords::EnPassant {
+                start,
+                end,
+                captured_pawn,
+            }
         }
-        MoveType::Lunge => vec![BasicAction::Move { start, end }],
+    }
+}
+
+pub fn move_type_coords(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveTypeCoords {
+    to_coords(move_type(board, start, end), start, end)
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum BasicAction {
+    Move { start: BoardCoord, end: BoardCoord },
+    Remove { coord: BoardCoord },
+    Change { coord: BoardCoord, piece: PieceType },
+}
+
+pub fn basic_actions(
+    board: &Board,
+    start: BoardCoord,
+    end: BoardCoord,
+) -> (BasicAction, Option<BasicAction>) {
+    use MoveTypeCoords::*;
+    match to_coords(move_type(board, start, end), start, end) {
+        Normal { start, end } => (BasicAction::Move { start, end }, None),
+        Lunge { start, end } => (BasicAction::Move { start, end }, None),
+        Capture { start, end } => (
+            BasicAction::Remove { coord: end },
+            Some(BasicAction::Move { start, end }),
+        ),
+        Castle {
+            king_start,
+            king_end,
+            rook_start,
+            rook_end,
+        } => (
+            BasicAction::Move {
+                start: king_start,
+                end: king_end,
+            },
+            Some(BasicAction::Move {
+                start: rook_start,
+                end: rook_end,
+            }),
+        ),
+        EnPassant {
+            start,
+            end,
+            captured_pawn,
+        } => (
+            BasicAction::Remove {
+                coord: captured_pawn,
+            },
+            Some(BasicAction::Move { start, end }),
+        ),
     }
 }
 
