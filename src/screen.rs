@@ -1,5 +1,10 @@
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use crate::ai::*;
 use crate::board::*;
@@ -913,9 +918,30 @@ struct AnimationEvent {
     id: usize,
     // How long this animation event takes place.
     animation_duration: f32,
-    // How long to wait before adding the next event.
-    delay_duration: f32,
+    // When to fire this event.
+    start_time: Instant,
 }
+
+impl PartialOrd for AnimationEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.start_time.cmp(&other.start_time).reverse())
+    }
+}
+
+impl PartialEq for AnimationEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.start_time.eq(&other.start_time)
+    }
+}
+
+impl Ord for AnimationEvent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // this is ok because Instant is Ord, so this cant fail
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl Eq for AnimationEvent {}
 
 #[derive(Debug)]
 struct AnimatedBoard {
@@ -928,8 +954,7 @@ struct AnimatedBoard {
     // Piece which end up "dead" should not be removed from this vector, instead
     // remove it from coords.
     pieces: Vec<AnimatedPiece>,
-    timer: f32,
-    event_queue: VecDeque<AnimationEvent>,
+    event_queue: BinaryHeap<AnimationEvent>,
 }
 
 impl AnimatedBoard {
@@ -968,8 +993,7 @@ impl AnimatedBoard {
             offset,
             coords,
             pieces,
-            timer: 0.0,
-            event_queue: VecDeque::with_capacity(3),
+            event_queue: BinaryHeap::with_capacity(3),
         }
     }
 
@@ -977,30 +1001,29 @@ impl AnimatedBoard {
         for piece in self.pieces.iter_mut().filter(|piece| piece.alive) {
             piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
         }
+        let now = Instant::now();
+        match self.event_queue.peek() {
+            Some(event) if event.start_time < now => {
+                let event = self.event_queue.pop().unwrap();
 
-        self.timer -= ggez::timer::delta(ctx).as_secs_f32();
-        // If it is time to pop something from the queue, do it and execute the action
-        if self.timer <= 0.0 && !self.event_queue.is_empty() {
-            let event = self.event_queue.pop_front().unwrap();
-            println!("Executing event! {:?}", event);
-            println!("Queue: {:?}", self.event_queue);
-            match event.action {
-                BasicAction::Move { start: _, end } => {
-                    let target = self.to_screen_coord(end);
-                    self.pieces[event.id].set_target(target);
-                }
-                BasicAction::Change { piece, .. } => {
-                    self.pieces[event.id].set_piecetype(piece);
-                }
-                BasicAction::Remove { coord } => {
-                    self.pieces[event.id].alive = false;
-                    ext_ctx.particles.push(particle::ParticleSystem::new(
-                        ctx,
-                        self.to_screen_coord_centered(coord),
-                    ))
+                match event.action {
+                    BasicAction::Move { start: _, end } => {
+                        let target = self.to_screen_coord(end);
+                        self.pieces[event.id].set_target(target);
+                    }
+                    BasicAction::Change { piece, .. } => {
+                        self.pieces[event.id].set_piecetype(piece);
+                    }
+                    BasicAction::Remove { coord } => {
+                        self.pieces[event.id].alive = false;
+                        ext_ctx.particles.push(particle::ParticleSystem::new(
+                            ctx,
+                            self.to_screen_coord_centered(coord),
+                        ))
+                    }
                 }
             }
-            self.timer = event.delay_duration;
+            _ => (),
         }
     }
 
@@ -1012,36 +1035,36 @@ impl AnimatedBoard {
         Ok(())
     }
 
-    fn queue_action(&mut self, action: BasicAction, delay_duration: f32) {
+    fn queue_action(&mut self, action: BasicAction, delay: f32) {
         let event = match action {
             BasicAction::Move { start, end: _ } => AnimationEvent {
                 action,
                 id: *self.coords.get(&start).unwrap(),
                 animation_duration: DEFAULT_ANIMATION_LENGTH,
-                delay_duration,
+                start_time: Instant::now() + Duration::from_secs_f32(delay),
             },
             BasicAction::Change { coord, piece: _ } => AnimationEvent {
                 action,
                 id: *self.coords.get(&coord).unwrap(),
                 animation_duration: 0.0,
-                delay_duration,
+                start_time: Instant::now() + Duration::from_secs_f32(delay),
             },
             BasicAction::Remove { coord } => AnimationEvent {
                 action,
                 id: *self.coords.get(&coord).unwrap(),
                 animation_duration: 0.0,
-                delay_duration,
+                start_time: Instant::now() + Duration::from_secs_f32(delay),
             },
         };
-        self.event_queue.push_back(event);
+        self.event_queue.push(event);
     }
 
     fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
-        self.event_queue.push_back(AnimationEvent {
+        self.event_queue.push(AnimationEvent {
             action: BasicAction::Change { coord, piece },
             id: *self.coords.get(&coord).unwrap(),
             animation_duration: 0.0,
-            delay_duration: 0.0,
+            start_time: Instant::now(),
         })
     }
 
@@ -1052,8 +1075,8 @@ impl AnimatedBoard {
             (remove @ BasicAction::Remove { .. }, Some(action)) => {
                 // We move first, then remove the piece after the animation
                 // This is done since otherwise the remove piece will look weird as it disappears instantly
-                self.queue_action(action, DEFAULT_ANIMATION_LENGTH);
-                self.queue_action(remove, 0.0);
+                self.queue_action(action, 0.0);
+                self.queue_action(remove, DEFAULT_ANIMATION_LENGTH);
             }
             (action, Some(action2)) => {
                 self.queue_action(action, 0.0);
