@@ -1360,54 +1360,6 @@ pub fn move_type_coords(board: &Board, start: BoardCoord, end: BoardCoord) -> Mo
     to_coords(move_type(board, start, end), start, end)
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum BasicAction {
-    Move { start: BoardCoord, end: BoardCoord },
-    Remove { coord: BoardCoord },
-    Change { coord: BoardCoord, piece: PieceType },
-}
-
-pub fn basic_actions(
-    board: &Board,
-    start: BoardCoord,
-    end: BoardCoord,
-) -> (BasicAction, Option<BasicAction>) {
-    use MoveTypeCoords::*;
-    match to_coords(move_type(board, start, end), start, end) {
-        Normal { start, end } => (BasicAction::Move { start, end }, None),
-        Lunge { start, end } => (BasicAction::Move { start, end }, None),
-        Capture { start, end } => (
-            BasicAction::Remove { coord: end },
-            Some(BasicAction::Move { start, end }),
-        ),
-        Castle {
-            king_start,
-            king_end,
-            rook_start,
-            rook_end,
-        } => (
-            BasicAction::Move {
-                start: king_start,
-                end: king_end,
-            },
-            Some(BasicAction::Move {
-                start: rook_start,
-                end: rook_end,
-            }),
-        ),
-        EnPassant {
-            start,
-            end,
-            captured_pawn,
-        } => (
-            BasicAction::Remove {
-                coord: captured_pawn,
-            },
-            Some(BasicAction::Move { start, end }),
-        ),
-    }
-}
-
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

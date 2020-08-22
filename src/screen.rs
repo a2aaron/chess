@@ -7,7 +7,7 @@ use crate::board::*;
 use crate::layout::*;
 use crate::particle;
 use crate::rect::*;
-use crate::{hstack, vstack};
+use crate::{ease, hstack, vstack};
 
 use rand::Rng;
 
@@ -125,14 +125,15 @@ impl EventHandler for Game {
 
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.ext_ctx.font)?,
-            ScreenState::InGame => self.grid.draw(ctx, &self.ext_ctx)?,
+            ScreenState::InGame => {
+                self.grid.draw(ctx, &self.ext_ctx)?; // Draw particles in ext_ctx
+                for particle_sys in &mut self.ext_ctx.particles {
+                    particle_sys.draw(ctx)?;
+                }
+                self.grid.draw_pieces(ctx, &self.ext_ctx)?;
+            }
         }
         graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
-
-        // Draw particles in ext_ctx
-        for particle_sys in &mut self.ext_ctx.particles {
-            particle_sys.draw(ctx)?;
-        }
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
@@ -699,7 +700,6 @@ impl Grid {
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        let mouse = &ext_ctx.mouse_state;
         graphics::draw(
             ctx,
             &self.grid.background_mesh,
@@ -707,14 +707,15 @@ impl Grid {
         )?;
 
         if self.ui_state() == UIState::Normal {
+            let mouse = &ext_ctx.mouse_state;
             self.grid.draw_highlights(ctx, mouse, &self.board)?;
         }
 
-        self.grid.animated_board.draw(ctx, ext_ctx)?;
+        self.sidebar.draw(ctx, self.ui_state())
+    }
 
-        self.sidebar.draw(ctx, self.ui_state())?;
-
-        Ok(())
+    fn draw_pieces(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
+        self.grid.animated_board.draw(ctx, ext_ctx)
     }
 
     /// Returns true if the current player is a human player
@@ -1043,7 +1044,8 @@ impl AnimatedBoard {
                             angle,
                             spread,
                             intensity,
-                            100,
+                            6,
+                            25,
                         ));
                     }
                 }
@@ -1131,7 +1133,10 @@ impl AnimatedBoard {
             Capture { start, end } => {
                 let move_event = move_event(&self.coords, start, end);
                 self.event_queue.push(move_event);
-                let remove_event = remove_event(&self, start, end, 5.0, PI / 3.0);
+                let distance_moved = (self.to_screen_coord_centered(end)
+                    - self.to_screen_coord_centered(start))
+                .norm();
+                let remove_event = remove_event(&self, start, end, distance_moved, PI / 6.0);
                 self.event_queue.push(remove_event);
                 move_piece(&mut self.coords, start, end);
             }
@@ -1158,7 +1163,7 @@ impl AnimatedBoard {
                     action: AnimationType::Remove {
                         coord: captured_pawn,
                         angle: na::Vector2::new(1.0, 0.0),
-                        intensity: 1.0,
+                        intensity: 35.0,
                         spread: PI * 2.0,
                     },
                     id: *self.coords.get(&captured_pawn).unwrap(),
@@ -1218,7 +1223,7 @@ struct AnimatedPiece {
     timer: f32,
     ani_length: f32,
     pre_delay: f32,
-    ease: Ease,
+    ease: ease::Ease,
 }
 
 impl AnimatedPiece {
@@ -1237,7 +1242,7 @@ impl AnimatedPiece {
             timer: 0.0,
             ani_length,
             pre_delay: DEFAULT_PREDELAY,
-            ease: Ease::InOutBack,
+            ease: ease::Ease::InOutBack,
         }
     }
 
@@ -1255,7 +1260,7 @@ impl AnimatedPiece {
         self.timer = 0.0;
         self.ani_length = DEFAULT_ANIMATION_LENGTH;
         self.pre_delay = 0.0;
-        self.ease = Ease::InOutCubic;
+        self.ease = ease::Ease::InOutCubic;
     }
 
     fn draw(
@@ -1277,56 +1282,6 @@ impl AnimatedPiece {
 
     fn set_piecetype(&mut self, piece: PieceType) {
         self.piece.piece = piece;
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
-enum Ease {
-    Linear,
-    OutQuadratic,
-    InOutCubic,
-    OutElastic,
-    OutBack,
-    InOutBack,
-}
-
-impl Ease {
-    fn ease(&self, x: f32) -> f32 {
-        use Ease::*;
-        match self {
-            Linear => x,
-            OutQuadratic => 1.0 - (1.0 - x) * (1.0 - x),
-            InOutCubic => {
-                if x < 0.5 {
-                    4.0 * x * x * x
-                } else {
-                    1.0 - (-2.0 * x + 2.0).powf(3.0) / 2.0
-                }
-            }
-            OutElastic => {
-                let c4 = (2.0 * std::f32::consts::PI) / 3.0;
-                2.0f32.powf(-10.0 * x) * ((x * 10.0 - 0.75) * c4).sin() + 1.0
-            }
-            OutBack => {
-                let c1 = 1.70158;
-                let c3 = c1 + 1.0;
-                1.0 + c3 * (x - 1.0).powf(3.0) + c1 * (x - 1.0).powf(2.0)
-            }
-            InOutBack => {
-                let c1 = 1.70158;
-                let c2 = c1 * 1.525;
-                if x < 0.5 {
-                    ((2.0 * x).powf(2.0) * ((c2 + 1.0) * 2.0 * x - c2)) / 2.0
-                } else {
-                    ((2.0 * x - 2.0).powf(2.0) * ((c2 + 1.0) * (x * 2.0 - 2.0) + c2) + 2.0) / 2.0
-                }
-            }
-        }
-    }
-    fn interpolate(&self, start: f32, end: f32, percent: f32) -> f32 {
-        let percent = self.ease(percent);
-        return start * (1.0 - percent) + end * percent;
     }
 }
 
