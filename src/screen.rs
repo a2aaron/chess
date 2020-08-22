@@ -1,10 +1,6 @@
-use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crate::ai::*;
 use crate::board::*;
@@ -21,6 +17,8 @@ use ggez::input;
 use ggez::mint;
 use ggez::nalgebra as na;
 use ggez::{Context, GameResult};
+
+const PI: f32 = std::f32::consts::PI;
 
 pub const SCREEN_WIDTH: f32 = 800.0;
 pub const SCREEN_HEIGHT: f32 = 600.0;
@@ -653,10 +651,12 @@ impl Grid {
             }
             GameOver => {
                 if self.sidebar.restart.pressed(mouse.pos) {
+                    ext_ctx.particles.clear();
                     self.new_game();
                 }
 
                 if self.sidebar.main_menu.pressed(mouse.pos) {
+                    ext_ctx.particles.clear();
                     *transition = ScreenTransition::ToTitleScreen;
                 }
             }
@@ -669,6 +669,7 @@ impl Grid {
             }
         }
         if DEBUG_RESTART && self.sidebar.restart.pressed(mouse.pos) {
+            ext_ctx.particles.clear();
             self.new_game();
         }
         self.grid.drop_locations = vec![];
@@ -681,7 +682,7 @@ impl Grid {
 
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(
-        ctx: &mut Context,
+        _ctx: &mut Context,
         board: &mut BoardState,
         board_view: &mut BoardView,
         time_since_last_move: &mut f32,
@@ -691,10 +692,10 @@ impl Grid {
         // Update the view first here because we want it to work off of the state
         // of board _before_ we make the actual move
         board_view.take_turn(board, start, end);
+        board.take_turn(start, end);
+
         // Set the time since the last move so the AI does not move immediately.
         *time_since_last_move = 0.0;
-
-        board.take_turn(start, end);
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -913,7 +914,7 @@ impl BoardView {
 #[derive(Debug)]
 struct AnimationEvent {
     // Only the variant here matters.
-    action: BasicAction,
+    action: AnimationType,
     // what piece to apply the action to
     id: usize,
     // How long this animation event takes place.
@@ -942,6 +943,21 @@ impl Ord for AnimationEvent {
 }
 
 impl Eq for AnimationEvent {}
+#[derive(Debug)]
+enum AnimationType {
+    Move {
+        target: BoardCoord,
+    },
+    Remove {
+        coord: BoardCoord,
+        angle: na::Vector2<f32>,
+        intensity: f32,
+        spread: f32,
+    },
+    Change {
+        piece: PieceType,
+    },
+}
 
 #[derive(Debug)]
 struct AnimatedBoard {
@@ -1007,19 +1023,28 @@ impl AnimatedBoard {
                 let event = self.event_queue.pop().unwrap();
 
                 match event.action {
-                    BasicAction::Move { start: _, end } => {
-                        let target = self.to_screen_coord(end);
+                    AnimationType::Move { target } => {
+                        let target = self.to_screen_coord(target);
                         self.pieces[event.id].set_target(target);
                     }
-                    BasicAction::Change { piece, .. } => {
+                    AnimationType::Change { piece } => {
                         self.pieces[event.id].set_piecetype(piece);
                     }
-                    BasicAction::Remove { coord } => {
+                    AnimationType::Remove {
+                        coord,
+                        angle,
+                        intensity,
+                        spread,
+                    } => {
                         self.pieces[event.id].alive = false;
                         ext_ctx.particles.push(particle::ParticleSystem::new(
                             ctx,
                             self.to_screen_coord_centered(coord),
-                        ))
+                            angle,
+                            spread,
+                            intensity,
+                            100,
+                        ));
                     }
                 }
             }
@@ -1035,33 +1060,9 @@ impl AnimatedBoard {
         Ok(())
     }
 
-    fn queue_action(&mut self, action: BasicAction, delay: f32) {
-        let event = match action {
-            BasicAction::Move { start, end: _ } => AnimationEvent {
-                action,
-                id: *self.coords.get(&start).unwrap(),
-                animation_duration: DEFAULT_ANIMATION_LENGTH,
-                start_time: Instant::now() + Duration::from_secs_f32(delay),
-            },
-            BasicAction::Change { coord, piece: _ } => AnimationEvent {
-                action,
-                id: *self.coords.get(&coord).unwrap(),
-                animation_duration: 0.0,
-                start_time: Instant::now() + Duration::from_secs_f32(delay),
-            },
-            BasicAction::Remove { coord } => AnimationEvent {
-                action,
-                id: *self.coords.get(&coord).unwrap(),
-                animation_duration: 0.0,
-                start_time: Instant::now() + Duration::from_secs_f32(delay),
-            },
-        };
-        self.event_queue.push(event);
-    }
-
     fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
         self.event_queue.push(AnimationEvent {
-            action: BasicAction::Change { coord, piece },
+            action: AnimationType::Change { piece },
             id: *self.coords.get(&coord).unwrap(),
             animation_duration: 0.0,
             start_time: Instant::now(),
@@ -1069,18 +1070,39 @@ impl AnimatedBoard {
     }
 
     fn take_turn(&mut self, board: &BoardState, start: BoardCoord, end: BoardCoord) {
-        // Construct the events to be fired later.
-        match basic_actions(&board.board, start, end) {
-            (action, None) => self.queue_action(action, 0.0),
-            (remove @ BasicAction::Remove { .. }, Some(action)) => {
-                // We move first, then remove the piece after the animation
-                // This is done since otherwise the remove piece will look weird as it disappears instantly
-                self.queue_action(action, 0.0);
-                self.queue_action(remove, DEFAULT_ANIMATION_LENGTH);
+        fn move_event(
+            coords: &HashMap<BoardCoord, usize>,
+            start: BoardCoord,
+            end: BoardCoord,
+        ) -> AnimationEvent {
+            AnimationEvent {
+                action: AnimationType::Move { target: end },
+                id: *coords.get(&start).unwrap(),
+                animation_duration: DEFAULT_ANIMATION_LENGTH,
+                start_time: Instant::now(),
             }
-            (action, Some(action2)) => {
-                self.queue_action(action, 0.0);
-                self.queue_action(action2, 0.0);
+        }
+
+        fn remove_event(
+            board: &AnimatedBoard,
+            start: BoardCoord,
+            end: BoardCoord,
+            intensity: f32,
+            spread: f32,
+        ) -> AnimationEvent {
+            let screen_start = board.to_screen_coord_centered(start);
+            let screen_end = board.to_screen_coord_centered(end);
+            let angle = screen_end - screen_start;
+            AnimationEvent {
+                action: AnimationType::Remove {
+                    coord: end,
+                    angle,
+                    intensity,
+                    spread,
+                },
+                id: *board.coords.get(&end).unwrap(),
+                animation_duration: DEFAULT_ANIMATION_LENGTH,
+                start_time: Instant::now() + Duration::from_secs_f32(DEFAULT_ANIMATION_LENGTH),
             }
         }
 
@@ -1101,7 +1123,16 @@ impl AnimatedBoard {
         use MoveTypeCoords::*;
         // Update interal board representation
         match move_type_coords(&board.board, start, end) {
-            Normal { start, end } | Capture { start, end } | Lunge { start, end } => {
+            Normal { start, end } | Lunge { start, end } => {
+                let event = move_event(&self.coords, start, end);
+                self.event_queue.push(event);
+                move_piece(&mut self.coords, start, end);
+            }
+            Capture { start, end } => {
+                let move_event = move_event(&self.coords, start, end);
+                self.event_queue.push(move_event);
+                let remove_event = remove_event(&self, start, end, 5.0, PI / 3.0);
+                self.event_queue.push(remove_event);
                 move_piece(&mut self.coords, start, end);
             }
             Castle {
@@ -1110,6 +1141,10 @@ impl AnimatedBoard {
                 rook_start,
                 rook_end,
             } => {
+                let king = move_event(&self.coords, king_start, king_end);
+                let rook = move_event(&self.coords, rook_start, rook_end);
+                self.event_queue.push(king);
+                self.event_queue.push(rook);
                 move_piece(&mut self.coords, king_start, king_end);
                 move_piece(&mut self.coords, rook_start, rook_end);
             }
@@ -1118,6 +1153,22 @@ impl AnimatedBoard {
                 end,
                 captured_pawn,
             } => {
+                let move_event = move_event(&self.coords, start, end);
+                let remove_event = AnimationEvent {
+                    action: AnimationType::Remove {
+                        coord: captured_pawn,
+                        angle: na::Vector2::new(1.0, 0.0),
+                        intensity: 1.0,
+                        spread: PI * 2.0,
+                    },
+                    id: *self.coords.get(&captured_pawn).unwrap(),
+                    animation_duration: DEFAULT_ANIMATION_LENGTH,
+                    start_time: Instant::now() + Duration::from_secs_f32(DEFAULT_ANIMATION_LENGTH),
+                };
+
+                self.event_queue.push(move_event);
+                self.event_queue.push(remove_event);
+
                 move_piece(&mut self.coords, start, end);
                 remove(&mut self.coords, captured_pawn);
             }
@@ -1171,10 +1222,6 @@ struct AnimatedPiece {
 }
 
 impl AnimatedPiece {
-    fn from_piece(coord: mint::Point2<f32>, piece: Piece) -> AnimatedPiece {
-        AnimatedPiece::new(coord, coord, piece, DEFAULT_ANIMATION_LENGTH)
-    }
-
     fn new(
         start: mint::Point2<f32>,
         end: mint::Point2<f32>,
@@ -1234,6 +1281,7 @@ impl AnimatedPiece {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
 enum Ease {
     Linear,
     OutQuadratic,
