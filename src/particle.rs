@@ -25,8 +25,8 @@ pub struct ParticleSystem {
     sizes: Vec<Tween<f32>>,
     rotations: Vec<Tween<f32>>,
     colors: Vec<Color>,
-    duration: Duration,
     start_time: Instant,
+    duration: Duration,
 }
 
 impl ParticleSystem {
@@ -55,12 +55,13 @@ impl ParticleSystem {
             let duration = rand::thread_rng().gen_range(0.3, 0.5);
             let offset: na::Vector2<f32> = scale * (rotate * angle.normalize());
             let pos = Tween::offset(
-                Ease::OutQuadratic,
+                Ease::OutCubic,
                 start,
                 offset,
                 Duration::from_secs_f32(duration),
             );
             positions.push(pos);
+
             sizes.push(Tween::new(
                 Ease::OutQuadratic,
                 1.0,
@@ -87,8 +88,8 @@ impl ParticleSystem {
             sprites,
             positions,
             sizes,
-            colors,
             rotations,
+            colors,
             duration: Duration::from_secs_f32(1.0),
             start_time: Instant::now(),
         }
@@ -125,9 +126,9 @@ impl ParticleSystem {
             self.spritebatch.set(
                 sprite,
                 DrawParam::default()
-                    .offset(na::Point2::new(0.5, 0.5))
                     .dest(pos.pos)
                     .scale(na::Vector2::new(size.pos, size.pos))
+                    .offset(na::Point2::new(0.5, 0.5)) // centers the rotation
                     .rotation(rotation.pos)
                     .color(color),
             )?;

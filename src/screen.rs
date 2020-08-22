@@ -133,6 +133,8 @@ impl EventHandler for Game {
                 self.grid.draw_pieces(ctx, &self.ext_ctx)?;
             }
         }
+
+        // Draw the mouse
         graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
         // Debug Rects
@@ -145,6 +147,17 @@ impl EventHandler for Game {
                     .unwrap();
             graphics::draw(ctx, &rect, DrawParam::default())?;
         }
+
+        // FPS counter
+        let text = format!("{:.0}", ggez::timer::fps(ctx));
+        let location = na::Point2::new(SCREEN_WIDTH - 20.0, 0.0);
+        draw_text(
+            ctx,
+            text,
+            self.ext_ctx.font,
+            DEFAULT_SCALE,
+            (location, color::RED),
+        )?;
 
         graphics::present(ctx)
     }
@@ -954,6 +967,8 @@ enum AnimationType {
         angle: na::Vector2<f32>,
         intensity: f32,
         spread: f32,
+        size: u16,
+        num_particles: usize,
     },
     Change {
         piece: PieceType,
@@ -1036,6 +1051,8 @@ impl AnimatedBoard {
                         angle,
                         intensity,
                         spread,
+                        size,
+                        num_particles,
                     } => {
                         self.pieces[event.id].alive = false;
                         ext_ctx.particles.push(particle::ParticleSystem::new(
@@ -1044,8 +1061,8 @@ impl AnimatedBoard {
                             angle,
                             spread,
                             intensity,
-                            6,
-                            25,
+                            size,
+                            num_particles,
                         ));
                     }
                 }
@@ -1091,6 +1108,7 @@ impl AnimatedBoard {
             end: BoardCoord,
             intensity: f32,
             spread: f32,
+            num_particles: usize,
         ) -> AnimationEvent {
             let screen_start = board.to_screen_coord_centered(start);
             let screen_end = board.to_screen_coord_centered(end);
@@ -1101,6 +1119,8 @@ impl AnimatedBoard {
                     angle,
                     intensity,
                     spread,
+                    num_particles,
+                    size: 6,
                 },
                 id: *board.coords.get(&end).unwrap(),
                 animation_duration: DEFAULT_ANIMATION_LENGTH,
@@ -1136,7 +1156,9 @@ impl AnimatedBoard {
                 let distance_moved = (self.to_screen_coord_centered(end)
                     - self.to_screen_coord_centered(start))
                 .norm();
-                let remove_event = remove_event(&self, start, end, distance_moved, PI / 6.0);
+                let num_particles = (distance_moved / 4.0) as usize;
+                let remove_event =
+                    remove_event(&self, start, end, distance_moved, PI / 6.0, num_particles);
                 self.event_queue.push(remove_event);
                 move_piece(&mut self.coords, start, end);
             }
@@ -1165,6 +1187,8 @@ impl AnimatedBoard {
                         angle: na::Vector2::new(1.0, 0.0),
                         intensity: 35.0,
                         spread: PI * 2.0,
+                        num_particles: 25,
+                        size: 6,
                     },
                     id: *self.coords.get(&captured_pawn).unwrap(),
                     animation_duration: DEFAULT_ANIMATION_LENGTH,

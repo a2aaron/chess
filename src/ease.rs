@@ -65,10 +65,15 @@ where
 #[allow(dead_code)]
 pub enum Ease {
     Linear,
+    InQuadratic,
+    InCubic,
+    InQuartic,
     OutQuadratic,
-    InOutCubic,
-    OutElastic,
+    OutCubic,
+    OutQuartic,
     OutBack,
+    OutElastic,
+    InOutCubic,
     InOutBack,
 }
 
@@ -77,22 +82,27 @@ impl Ease {
         use Ease::*;
         match self {
             Linear => x,
+            InQuadratic => x * x,
+            InCubic => x * x * x,
+            InQuartic => x * x * x * x,
             OutQuadratic => 1.0 - (1.0 - x) * (1.0 - x),
+            OutCubic => 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x),
+            OutQuartic => 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x) * (1.0 - x),
+            OutBack => {
+                let c1 = 1.70158;
+                let c3 = c1 + 1.0;
+                1.0 + c3 * (x - 1.0).powf(3.0) + c1 * (x - 1.0).powf(2.0)
+            }
+            OutElastic => {
+                let c4 = (2.0 * std::f32::consts::PI) / 3.0;
+                2.0f32.powf(-10.0 * x) * ((x * 10.0 - 0.75) * c4).sin() + 1.0
+            }
             InOutCubic => {
                 if x < 0.5 {
                     4.0 * x * x * x
                 } else {
                     1.0 - (-2.0 * x + 2.0).powf(3.0) / 2.0
                 }
-            }
-            OutElastic => {
-                let c4 = (2.0 * std::f32::consts::PI) / 3.0;
-                2.0f32.powf(-10.0 * x) * ((x * 10.0 - 0.75) * c4).sin() + 1.0
-            }
-            OutBack => {
-                let c1 = 1.70158;
-                let c3 = c1 + 1.0;
-                1.0 + c3 * (x - 1.0).powf(3.0) + c1 * (x - 1.0).powf(2.0)
             }
             InOutBack => {
                 let c1 = 1.70158;
