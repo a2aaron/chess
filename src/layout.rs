@@ -2,7 +2,11 @@ use ggez::graphics::mint::{Point2, Vector2};
 use ggez::graphics::Rect;
 
 use crate::rect::*;
-use crate::screen::*;
+use crate::ui::{Button, TextBox};
+
+/// If true, then draw rectangles on top of various UI elements. This is to help
+/// debug problems with the layout code.
+pub const DEBUG_LAYOUT: bool = false;
 
 /// Trait which indicates that an object can be laid out onscreen in some fashion.
 /// This based on the Flutter algorithm for laying out objects.
