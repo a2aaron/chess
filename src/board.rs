@@ -51,7 +51,7 @@ impl BoardState {
 
         match move_type(&self.board, start, end) {
             Castle(color, side) => self.board.can_castle(color, side),
-            Normal | Lunge => self.board.check_move(self.current_player, start, end),
+            Normal | Lunge | Capture => self.board.check_move(self.current_player, start, end),
             EnPassant(side) => self.board.check_enpassant(self.current_player, start, side),
         }
     }
@@ -81,12 +81,19 @@ impl BoardState {
             }
             Normal => {
                 self.board.clear_just_lunged();
-                if let Some(captured_piece) = self.get(end).0 {
-                    match captured_piece.color {
-                        Black => self.dead_black.push(captured_piece),
-                        White => self.dead_white.push(captured_piece),
-                    }
+                self.board.move_piece(start, end)
+            }
+            Capture => {
+                self.board.clear_just_lunged();
+                let captured_piece = self
+                    .get(end)
+                    .0
+                    .expect("Expected piece to be present at end on a capture!");
+                match captured_piece.color {
+                    Black => self.dead_black.push(captured_piece),
+                    White => self.dead_white.push(captured_piece),
                 }
+
                 self.board.move_piece(start, end)
             }
             Lunge => {
@@ -95,11 +102,20 @@ impl BoardState {
                 self.board.lunge(start);
             }
             EnPassant(side) => {
-                if let Some(captured_piece) = self.get(end).0 {
-                    match captured_piece.color {
-                        Black => self.dead_black.push(captured_piece),
-                        White => self.dead_white.push(captured_piece),
-                    }
+                use BoardSide::*;
+                let captured_coord = match side {
+                    Kingside => BoardCoord(start.0 + 1, start.1),
+                    Queenside => BoardCoord(start.0 - 1, start.1),
+                };
+
+                // Add the captured pawn to the dead piece list
+                let captured_piece = self
+                    .get(captured_coord)
+                    .0
+                    .expect(&format!("Expected pawn at {:?}", captured_coord));
+                match captured_piece.color {
+                    Black => self.dead_black.push(captured_piece),
+                    White => self.dead_white.push(captured_piece),
                 }
 
                 self.board.enpassant(start, end);
@@ -241,7 +257,7 @@ impl Board {
                 let x = j;
                 let y = i + (8 - str_board.len());
                 let tile = match piece.chars().nth(1).unwrap() {
-                    'P' => Tile::new(color, Pawn(false)),
+                    'P' => Tile::new(color, Pawn { just_lunged: false }),
                     'N' => Tile::new(color, Knight),
                     'B' => Tile::new(color, Bishop),
                     'R' => Tile::new(color, Rook),
@@ -346,7 +362,7 @@ impl Board {
             PieceType::King => {
                 list.0.append(&mut self.castle_locations(player));
             }
-            PieceType::Pawn(_) => list.0.append(&mut self.enpassant_locations(player, coord)),
+            PieceType::Pawn { .. } => list.0.append(&mut self.enpassant_locations(player, coord)),
             _ => {}
         }
 
@@ -537,7 +553,7 @@ impl Board {
         match capturing_pawn.0 {
             Some(Piece {
                 color: c,
-                piece: PieceType::Pawn(_),
+                piece: PieceType::Pawn { .. },
                 has_moved: _,
             }) if c == player => (),
             _ => return Err("Capturing piece must be a pawn of the player's color"),
@@ -546,7 +562,7 @@ impl Board {
         match captured_pawn.0 {
             Some(Piece {
                 color: c,
-                piece: PieceType::Pawn(true),
+                piece: PieceType::Pawn { just_lunged: true },
                 has_moved: _,
             }) if c != player => (),
             _ => {
@@ -733,7 +749,7 @@ impl Board {
                 let check_coord = BoardCoord(x, y);
                 if self
                     .get(check_coord)
-                    .is(color.opposite(), PieceType::Pawn(false))
+                    .is(color.opposite(), PieceType::Pawn { just_lunged: false })
                 {
                     return false;
                 }
@@ -788,7 +804,7 @@ impl Board {
                 match tile {
                     None => continue,
                     Some(piece) => match piece.piece {
-                        Pawn(_) | Rook | Queen => return false,
+                        Pawn { .. } | Rook | Queen => return false,
                         Knight => num_bishops += 1,
                         Bishop => num_knights += 1,
                         // we will assume that the board always has two kings
@@ -840,7 +856,7 @@ impl Board {
             let black_coord = BoardCoord(i, 0);
             if self
                 .get(black_coord)
-                .is(Color::Black, PieceType::Pawn(false))
+                .is(Color::Black, PieceType::Pawn { just_lunged: false })
             {
                 return Some(black_coord);
             }
@@ -848,7 +864,7 @@ impl Board {
             let white_coord = BoardCoord(i, 7);
             if self
                 .get(white_coord)
-                .is(Color::White, PieceType::Pawn(false))
+                .is(Color::White, PieceType::Pawn { just_lunged: false })
             {
                 return Some(white_coord);
             }
@@ -862,7 +878,6 @@ impl Board {
     /// - on the last rank of its side
     /// - being promoted to a piece that is not a pawn or a king
     pub fn check_promote(&self, coord: BoardCoord, piece: PieceType) -> Result<(), &'static str> {
-        use PieceType::*;
         let pawn = self.get(coord);
         let color = match coord.1 {
             0 => Color::Black,
@@ -872,13 +887,13 @@ impl Board {
             }
         };
 
-        if !pawn.is(color, Pawn(false)) {
+        if !pawn.is(color, PieceType::Pawn { just_lunged: false }) {
             return Err("Can only promote a pawn of opposite color at this position.");
         }
 
         match piece {
-            Pawn(_) => Err("Can not promote to a pawn"),
-            King => Err("Can not promote to a king"),
+            PieceType::Pawn { .. } => Err("Can not promote to a pawn"),
+            PieceType::King => Err("Can not promote to a king"),
             _ => Ok(()),
         }
     }
@@ -1016,7 +1031,7 @@ fn get_move_list_ignore_check(board: &Board, coord: BoardCoord, out: &mut MoveLi
     match piece {
         None => (),
         Some(piece) => match piece.piece {
-            Pawn(_) => check_pawn(board, coord, piece.color, out),
+            Pawn { .. } => check_pawn(board, coord, piece.color, out),
             Knight | King => {
                 check_jump_piece(board, coord, piece.color, get_move_deltas(piece.piece), out)
             }
@@ -1136,7 +1151,7 @@ fn get_los(piece: PieceType) -> Box<dyn Iterator<Item = LosIterator>> {
         Rook => Box::new(get_los_rook()),
         Bishop => Box::new(get_los_bishop()),
         Queen => Box::new(get_los_rook().chain(get_los_bishop())),
-        Pawn(_) | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
+        Pawn { .. } | Knight | King => panic!("Expected a Rook, Bishop, or Queen. Got {:?}", piece),
     }
 }
 
@@ -1197,7 +1212,9 @@ fn get_move_deltas(piece: PieceType) -> Vec<BoardCoord> {
             BoardCoord(-1, 0),
             BoardCoord(-1, 1),
         ],
-        Pawn(_) | Rook | Bishop | Queen => panic!("Expected a Knight or a King, got {:?}", piece),
+        Pawn { .. } | Rook | Bishop | Queen => {
+            panic!("Expected a Knight or a King, got {:?}", piece)
+        }
     }
 }
 
@@ -1234,44 +1251,16 @@ pub enum BoardSide {
     Kingside,
 }
 
-// TODO: maybe unify this with the below MoveType enum. Kinda hacky
-pub enum MoveOrCastle {
-    Move(BoardCoord, BoardCoord),
-    Castle(BoardCoord, BoardCoord, BoardCoord, BoardCoord),
-    EnPassant(BoardCoord, BoardCoord, BoardCoord),
-}
-
-pub fn move_or_castle(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveOrCastle {
-    match move_type(board, start, end) {
-        MoveType::Castle(color, board_side) => {
-            let (rook_start, rook_end) = match (color, board_side) {
-                (Color::White, BoardSide::Queenside) => (BoardCoord(0, 0), BoardCoord(3, 0)),
-                (Color::White, BoardSide::Kingside) => (BoardCoord(7, 0), BoardCoord(5, 0)),
-                (Color::Black, BoardSide::Queenside) => (BoardCoord(0, 7), BoardCoord(3, 7)),
-                (Color::Black, BoardSide::Kingside) => (BoardCoord(7, 7), BoardCoord(5, 7)),
-            };
-            MoveOrCastle::Castle(start, end, rook_start, rook_end)
-        }
-        MoveType::EnPassant(side) => match side {
-            BoardSide::Queenside => {
-                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 - 1, start.1))
-            }
-            BoardSide::Kingside => {
-                MoveOrCastle::EnPassant(start, end, BoardCoord(start.0 + 1, start.1))
-            }
-        },
-        _ => MoveOrCastle::Move(start, end),
-    }
-}
-
+#[derive(Debug, Copy, Clone)]
 enum MoveType {
-    Castle(Color, BoardSide),
     Normal,
+    Capture,
+    Lunge,
+    Castle(Color, BoardSide),
     // A "queenside" enpassant is defined as the attacking pawn moving towards the
     // queen's side of the board (the x coordinate decreases), and vice versa for
     // "kingside" enpassant
     EnPassant(BoardSide),
-    Lunge,
 }
 
 /// Returns what kind of move this is, either normal, a castle, or an en passant
@@ -1296,14 +1285,81 @@ fn move_type(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveType {
     match (piece.piece, delta, empty_end_pos) {
         (PieceType::King, (-2, 0), _) => Castle(piece.color, Queenside),
         (PieceType::King, (2, 0), _) => Castle(piece.color, Kingside),
-        (PieceType::Pawn(_), (0, 2), _) => Lunge,
+        (PieceType::Pawn { .. }, (0, 2), _) => Lunge,
         // An enpassant move will always attempt to move into an empty square
         // while a capture will move onto a nonempty square
-        (PieceType::Pawn(_), (-1, 1), true) => EnPassant(Queenside),
-        (PieceType::Pawn(_), (1, 1), true) => EnPassant(Kingside),
+        (PieceType::Pawn { .. }, (-1, 1), true) => EnPassant(Queenside),
+        (PieceType::Pawn { .. }, (1, 1), true) => EnPassant(Kingside),
+        (_, _, false) => Capture,
         _ => Normal,
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub enum MoveTypeCoords {
+    Normal {
+        start: BoardCoord,
+        end: BoardCoord,
+    },
+    Capture {
+        start: BoardCoord,
+        end: BoardCoord,
+    },
+    Lunge {
+        start: BoardCoord,
+        end: BoardCoord,
+    },
+    Castle {
+        king_start: BoardCoord,
+        king_end: BoardCoord,
+        rook_start: BoardCoord,
+        rook_end: BoardCoord,
+    },
+    EnPassant {
+        start: BoardCoord,
+        end: BoardCoord,
+        captured_pawn: BoardCoord,
+    },
+}
+
+fn to_coords(move_type: MoveType, start: BoardCoord, end: BoardCoord) -> MoveTypeCoords {
+    match move_type {
+        MoveType::Normal => MoveTypeCoords::Normal { start, end },
+        MoveType::Lunge => MoveTypeCoords::Lunge { start, end },
+        MoveType::Capture => MoveTypeCoords::Capture { start, end },
+        MoveType::Castle(color, board_side) => {
+            let (king_start, king_end) = (start, end);
+            let (rook_start, rook_end) = match (color, board_side) {
+                (Color::White, BoardSide::Queenside) => (BoardCoord(0, 0), BoardCoord(3, 0)),
+                (Color::White, BoardSide::Kingside) => (BoardCoord(7, 0), BoardCoord(5, 0)),
+                (Color::Black, BoardSide::Queenside) => (BoardCoord(0, 7), BoardCoord(3, 7)),
+                (Color::Black, BoardSide::Kingside) => (BoardCoord(7, 7), BoardCoord(5, 7)),
+            };
+            MoveTypeCoords::Castle {
+                king_start,
+                king_end,
+                rook_start,
+                rook_end,
+            }
+        }
+        MoveType::EnPassant(side) => {
+            let captured_pawn = match side {
+                BoardSide::Queenside => BoardCoord(start.0 - 1, start.1),
+                BoardSide::Kingside => BoardCoord(start.0 + 1, start.1),
+            };
+            MoveTypeCoords::EnPassant {
+                start,
+                end,
+                captured_pawn,
+            }
+        }
+    }
+}
+
+pub fn move_type_coords(board: &Board, start: BoardCoord, end: BoardCoord) -> MoveTypeCoords {
+    to_coords(move_type(board, start, end), start, end)
+}
+
 /// Newtype wrapper for `Option<Piece>`. `Some(piece)` indicates that a piece is
 /// in the tile, and `None` indicates that the tile is empty. Used in `Board`.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -1337,7 +1393,7 @@ impl Tile {
     /// Set `just_lunged` flag on Pawn if the tile is a pawn. Else, do nothing.
     pub fn set_just_lunged(&mut self, set: bool) {
         if let Some(piece) = &mut self.0 {
-            if let PieceType::Pawn(just_lunged) = &mut piece.piece {
+            if let PieceType::Pawn { just_lunged } = &mut piece.piece {
                 *just_lunged = set;
             }
         }
@@ -1444,7 +1500,7 @@ impl fmt::Display for Color {
 /// lunged (moved two spaces) on the previous turn.S
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PieceType {
-    Pawn(bool),
+    Pawn { just_lunged: bool },
     Knight,
     Bishop,
     Rook,
@@ -1456,7 +1512,7 @@ impl PieceType {
     pub fn as_str(&self) -> &'static str {
         use PieceType::*;
         match self {
-            Pawn(_) => PAWN_STR,
+            Pawn { .. } => PAWN_STR,
             Knight => KNIGHT_STR,
             Bishop => BISHOP_STR,
             Rook => ROOK_STR,
@@ -1470,7 +1526,7 @@ impl fmt::Display for PieceType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use PieceType::*;
         match self {
-            Pawn(_) => write!(f, "P"),
+            Pawn { .. } => write!(f, "P"),
             Knight => write!(f, "N"),
             Bishop => write!(f, "B"),
             Rook => write!(f, "R"),
@@ -1502,7 +1558,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(3, 3),
-            Tile::new(Color::White, PieceType::Pawn(false)),
+            Tile::new(Color::White, PieceType::Pawn { just_lunged: false }),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -1521,7 +1577,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(3, 3),
-            Tile::new(Color::White, PieceType::Pawn(false)),
+            Tile::new(Color::White, PieceType::Pawn { just_lunged: false }),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);
@@ -1534,7 +1590,7 @@ mod tests {
         let mut expected = Board::blank();
         expected.set(
             BoardCoord(0, 0),
-            Tile::new(Color::White, PieceType::Pawn(false)),
+            Tile::new(Color::White, PieceType::Pawn { just_lunged: false }),
         );
         println!("real\n{}\nexpected\n{}", board, expected);
         assert_eq!(board, expected);

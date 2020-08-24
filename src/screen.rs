@@ -1,10 +1,13 @@
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::ai::*;
 use crate::board::*;
 use crate::layout::*;
+use crate::particle;
 use crate::rect::*;
-use crate::{hstack, vstack};
+use crate::{ease, hstack, vstack};
 
 use rand::Rng;
 
@@ -14,6 +17,8 @@ use ggez::input;
 use ggez::mint;
 use ggez::nalgebra as na;
 use ggez::{Context, GameResult};
+
+const PI: f32 = std::f32::consts::PI;
 
 pub const SCREEN_WIDTH: f32 = 800.0;
 pub const SCREEN_HEIGHT: f32 = 600.0;
@@ -106,6 +111,10 @@ impl EventHandler for Game {
 
         self.ext_ctx.mouse_state.pos = ggez::input::mouse::position(ctx);
 
+        for particle_sys in &mut self.ext_ctx.particles {
+            particle_sys.upd8();
+        }
+
         Ok(())
     }
 
@@ -123,11 +132,14 @@ impl EventHandler for Game {
 
         match self.screen {
             ScreenState::TitleScreen => self.title_screen.draw(ctx, self.ext_ctx.font)?,
-            ScreenState::InGame => self.grid.draw(ctx, &self.ext_ctx)?,
+            ScreenState::InGame => {
+                self.grid.draw(ctx, &self.ext_ctx)?; // Draw particles in ext_ctx
+                for particle_sys in &mut self.ext_ctx.particles {
+                    particle_sys.draw(ctx)?;
+                }
+                self.grid.draw_pieces(ctx, &self.ext_ctx)?;
+            }
         }
-
-        // Ensure we draw the mouse cursor over everything else
-        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
@@ -139,6 +151,22 @@ impl EventHandler for Game {
                     .unwrap();
             graphics::draw(ctx, &rect, DrawParam::default())?;
         }
+
+        // FPS counter
+        let text = format!("{:.0}", ggez::timer::fps(ctx));
+        let location = na::Point2::new(SCREEN_WIDTH - 20.0, 0.0);
+        draw_text(
+            ctx,
+            text,
+            self.ext_ctx.font,
+            DEFAULT_SCALE,
+            (location, color::RED),
+        )?;
+
+        // Draw the mouse cursor. Note that this is last so that we draw the
+        // mouse cursor over everything else
+        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
+
         graphics::present(ctx)
     }
 
@@ -172,7 +200,7 @@ impl EventHandler for Game {
                 .mouse_up_upd8(mint::Point2 { x, y }, &mut self.transition),
             ScreenState::InGame => {
                 self.grid
-                    .mouse_up_upd8(ctx, &self.ext_ctx.mouse_state, &mut self.transition)
+                    .mouse_up_upd8(ctx, &mut self.ext_ctx, &mut self.transition)
             }
         }
     }
@@ -186,7 +214,9 @@ pub struct ExtendedContext {
     mouse_state: MouseState,
     /// font for in game text
     font: graphics::Font,
-    /// debug rectangles. Rendered in the chosen color on top of everything else.
+    particles: Vec<particle::ParticleSystem>,
+    /// Debug rectangles. These are rendered in the chosen color on top of
+    /// everything else.
     debug_render: Vec<(Rect, graphics::Color)>,
 }
 
@@ -195,6 +225,7 @@ impl ExtendedContext {
         ExtendedContext {
             mouse_state: MouseState::new(ctx),
             font,
+            particles: vec![],
             debug_render: vec![],
         }
     }
@@ -319,7 +350,7 @@ impl TitleScreen {
         mouse_pos: mint::Point2<f32>,
         screen_transition: &mut ScreenTransition,
     ) {
-        /// On game start, get which AIs should be used
+        // On game start, get which AIs should be used
         if self.start_game.pressed(mouse_pos) {
             let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
                 0 => None,
@@ -372,7 +403,7 @@ pub enum ScreenState {
 #[derive(Debug)]
 pub struct Grid {
     // Handles drawing the grid stuff
-    grid: GridUI,
+    grid: BoardView,
     // The actual underling board that runs the chess board.
     board: BoardState,
     // If this is None, then use a human player. Otherwise, use the listed AI player
@@ -411,12 +442,12 @@ impl Grid {
         let board = BoardState::new(Board::default());
         let offset: na::Vector2<f32> = na::Vector2::new(DONTCARE, DONTCARE);
         let mut grid = Grid {
-            grid: GridUI {
+            grid: BoardView {
                 square_size,
                 offset,
                 drop_locations: vec![],
                 animated_board: AnimatedBoard::new(&board, square_size, offset),
-                background_mesh: GridUI::background_mesh(ctx, square_size),
+                background_mesh: BoardView::background_mesh(ctx, square_size),
                 last_move: None,
             },
             board,
@@ -582,6 +613,7 @@ impl Grid {
                             self.board.current_player, start, end, self.board
                         ));
                         Self::take_turn(
+                            ctx,
                             &mut self.board,
                             &mut self.grid,
                             &mut self.time_since_last_move,
@@ -605,7 +637,7 @@ impl Grid {
             }
         }
 
-        self.grid.upd8(ctx);
+        self.grid.upd8(ctx, ext_ctx);
 
         // TODO: It is probably wasteful to relayout every frame. Maybe every turn?
         self.relayout(ext_ctx);
@@ -621,10 +653,11 @@ impl Grid {
 
     fn mouse_up_upd8(
         &mut self,
-        _sctx: &mut Context,
-        mouse: &MouseState,
+        ctx: &mut Context,
+        ext_ctx: &mut ExtendedContext,
         transition: &mut ScreenTransition,
     ) {
+        let mouse = &ext_ctx.mouse_state;
         use UIState::*;
         match self.ui_state() {
             Normal => {
@@ -643,6 +676,7 @@ impl Grid {
                             // We don't ratelimit how fast humans can move since it's really unlikely they'll
                             // move too fast for the other player to see
                             Self::take_turn(
+                                ctx,
                                 &mut self.board,
                                 &mut self.grid,
                                 &mut self.time_since_last_move,
@@ -655,10 +689,12 @@ impl Grid {
             }
             GameOver => {
                 if self.sidebar.restart.pressed(mouse.pos) {
+                    ext_ctx.particles.clear();
                     self.new_game();
                 }
 
                 if self.sidebar.main_menu.pressed(mouse.pos) {
+                    ext_ctx.particles.clear();
                     *transition = ScreenTransition::ToTitleScreen;
                 }
             }
@@ -671,33 +707,36 @@ impl Grid {
             }
         }
         if DEBUG_RESTART && self.sidebar.restart.pressed(mouse.pos) {
+            ext_ctx.particles.clear();
             self.new_game();
         }
         self.grid.drop_locations = vec![];
     }
 
-    fn promote(board: &mut BoardState, grid: &mut GridUI, coord: BoardCoord, piece: PieceType) {
+    fn promote(board: &mut BoardState, grid: &mut BoardView, coord: BoardCoord, piece: PieceType) {
         grid.promote(coord, piece);
         board.promote(coord, piece);
     }
 
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(
+        _ctx: &mut Context,
         board: &mut BoardState,
-        grid: &mut GridUI,
+        board_view: &mut BoardView,
         time_since_last_move: &mut f32,
         start: BoardCoord,
         end: BoardCoord,
     ) {
-        // Update grid first here because we want grid to work off of the state
+        // Update the view first here because we want it to work off of the state
         // of board _before_ we make the actual move
-        grid.take_turn(board, start, end);
+        board_view.take_turn(board, start, end);
         board.take_turn(start, end);
+
+        // Set the time since the last move so the AI does not move immediately.
         *time_since_last_move = 0.0;
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        let mouse = &ext_ctx.mouse_state;
         graphics::draw(
             ctx,
             &self.grid.background_mesh,
@@ -705,14 +744,15 @@ impl Grid {
         )?;
 
         if self.ui_state() == UIState::Normal {
+            let mouse = &ext_ctx.mouse_state;
             self.grid.draw_highlights(ctx, mouse, &self.board)?;
         }
 
-        self.grid.animated_board.draw(ctx, ext_ctx)?;
+        self.sidebar.draw(ctx, self.ui_state())
+    }
 
-        self.sidebar.draw(ctx, self.ui_state())?;
-
-        Ok(())
+    fn draw_pieces(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
+        self.grid.animated_board.draw(ctx, ext_ctx)
     }
 
     /// Returns true if the current player is a human player
@@ -741,7 +781,7 @@ enum UIState {
 }
 
 #[derive(Debug)]
-struct GridUI {
+struct BoardView {
     // Size of a single square, in pixels
     square_size: f32,
     // Offset of the entire screen from the upper left.
@@ -762,16 +802,16 @@ struct GridUI {
 
 /// This struct mostly handles drawing the chess board, its pieces, square
 /// highlights, and handling screenspace/boardspace convesions
-impl GridUI {
+impl BoardView {
     fn new_game(&mut self, board: &BoardState) {
         self.drop_locations = vec![];
         self.last_move = None;
         self.animated_board = AnimatedBoard::new(board, self.square_size, self.offset);
     }
 
-    fn upd8(&mut self, ctx: &mut Context) {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
         // probably another thing here????
-        self.animated_board.upd8(ctx);
+        self.animated_board.upd8(ctx, ext_ctx);
     }
 
     fn upd8_drop_locations(&mut self, mouse_pos: mint::Point2<f32>, board: &BoardState) {
@@ -897,19 +937,7 @@ impl GridUI {
     // Move the piece from start to end and update the last move/animation boards
     fn take_turn(&mut self, board: &BoardState, start: BoardCoord, end: BoardCoord) {
         self.last_move = Some((start, end));
-        match move_or_castle(&board.board, start, end) {
-            MoveOrCastle::Move(start, end) => {
-                self.animated_board.move_piece(start, end);
-            }
-            MoveOrCastle::Castle(start, end, rook_start, rook_end) => {
-                self.animated_board.move_piece(start, end);
-                self.animated_board.move_piece(rook_start, rook_end);
-            }
-            MoveOrCastle::EnPassant(start, end, remove) => {
-                self.animated_board.move_piece(start, end);
-                self.animated_board.remove(remove);
-            }
-        }
+        self.animated_board.take_turn(board, start, end);
     }
 
     fn to_grid_coord(&self, screen_coords: mint::Point2<f32>) -> Result<BoardCoord, &'static str> {
@@ -922,19 +950,73 @@ impl GridUI {
 }
 
 #[derive(Debug)]
+struct AnimationEvent {
+    // Only the variant here matters.
+    action: AnimationType,
+    // what piece to apply the action to
+    id: usize,
+    // How long this animation event takes place.
+    animation_duration: f32,
+    // When to fire this event.
+    start_time: Instant,
+}
+
+impl PartialOrd for AnimationEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.start_time.cmp(&other.start_time).reverse())
+    }
+}
+
+impl PartialEq for AnimationEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.start_time.eq(&other.start_time)
+    }
+}
+
+impl Ord for AnimationEvent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // this is ok because Instant is Ord, so this cant fail
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl Eq for AnimationEvent {}
+#[derive(Debug)]
+enum AnimationType {
+    Move {
+        target: BoardCoord,
+    },
+    Remove {
+        coord: BoardCoord,
+        angle: na::Vector2<f32>,
+        intensity: f32,
+        spread: f32,
+        size: u16,
+        num_particles: usize,
+    },
+    Change {
+        piece: PieceType,
+    },
+}
+
+#[derive(Debug)]
 struct AnimatedBoard {
     square_size: f32,
     offset: na::Vector2<f32>,
-    pieces: HashMap<BoardCoord, AnimatedPiece>,
+    // A hashmap of all of the _alive_ pieces on the board and their current position
+    // Note that this hash map stores indicies into `pieces`.
+    coords: HashMap<BoardCoord, usize>,
+    // The actual pieces. This vector should not be changed after initalization
+    // Piece which end up "dead" should not be removed from this vector, instead
+    // remove it from coords.
+    pieces: Vec<AnimatedPiece>,
+    event_queue: BinaryHeap<AnimationEvent>,
 }
 
 impl AnimatedBoard {
     fn new(board: &BoardState, square_size: f32, offset: na::Vector2<f32>) -> AnimatedBoard {
-        let mut ani_board = AnimatedBoard {
-            square_size,
-            offset,
-            pieces: HashMap::new(),
-        };
+        let mut coords = HashMap::with_capacity(32);
+        let mut pieces = Vec::with_capacity(32);
         for i in 0..8 {
             for j in 0..8 {
                 let coord = BoardCoord(i, j);
@@ -956,43 +1038,203 @@ impl AnimatedBoard {
                         piece,
                         rand::thread_rng().gen_range(0.4, 0.8),
                     );
-                    ani_board.pieces.insert(coord, piece);
+                    pieces.push(piece);
+                    let id = pieces.len() - 1;
+                    coords.insert(coord, id);
                 }
             }
         }
-        ani_board
+        AnimatedBoard {
+            square_size,
+            offset,
+            coords,
+            pieces,
+            event_queue: BinaryHeap::with_capacity(3),
+        }
     }
 
-    fn upd8(&mut self, ctx: &mut Context) {
-        for piece in &mut self.pieces.values_mut() {
+    fn upd8(&mut self, ctx: &mut Context, ext_ctx: &mut ExtendedContext) {
+        for piece in self.pieces.iter_mut().filter(|piece| piece.alive) {
             piece.upd8(ggez::timer::delta(ctx).as_secs_f32());
+        }
+        let now = Instant::now();
+        match self.event_queue.peek() {
+            Some(event) if event.start_time < now => {
+                let event = self.event_queue.pop().unwrap();
+
+                match event.action {
+                    AnimationType::Move { target } => {
+                        let target = self.to_screen_coord(target);
+                        self.pieces[event.id].set_target(target);
+                    }
+                    AnimationType::Change { piece } => {
+                        self.pieces[event.id].set_piecetype(piece);
+                    }
+                    AnimationType::Remove {
+                        coord,
+                        angle,
+                        intensity,
+                        spread,
+                        size,
+                        num_particles,
+                    } => {
+                        self.pieces[event.id].alive = false;
+                        ext_ctx.particles.push(particle::ParticleSystem::new(
+                            ctx,
+                            self.to_screen_coord_centered(coord),
+                            angle,
+                            spread,
+                            intensity,
+                            size,
+                            num_particles,
+                        ));
+                    }
+                }
+            }
+            _ => (),
         }
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
-        for piece in self.pieces.values() {
+        for piece in self.pieces.iter().filter(|piece| piece.alive) {
             piece.draw(ctx, ext_ctx, self.square_size)?;
         }
         draw_text_workaround(ctx);
         Ok(())
     }
 
-    fn remove(&mut self, coord: BoardCoord) {
-        self.pieces.remove(&coord);
-    }
-
-    fn move_piece(&mut self, start: BoardCoord, end: BoardCoord) {
-        let mut piece = self.pieces.remove(&start).unwrap();
-        piece.set_target(self.to_screen_coord(end));
-        self.pieces.insert(end, piece);
-    }
-
     fn promote(&mut self, coord: BoardCoord, piece: PieceType) {
-        self.pieces.get_mut(&coord).unwrap().piece.piece = piece;
+        self.event_queue.push(AnimationEvent {
+            action: AnimationType::Change { piece },
+            id: *self.coords.get(&coord).unwrap(),
+            animation_duration: 0.0,
+            start_time: Instant::now(),
+        })
+    }
+
+    fn take_turn(&mut self, board: &BoardState, start: BoardCoord, end: BoardCoord) {
+        fn move_event(
+            coords: &HashMap<BoardCoord, usize>,
+            start: BoardCoord,
+            end: BoardCoord,
+        ) -> AnimationEvent {
+            AnimationEvent {
+                action: AnimationType::Move { target: end },
+                id: *coords.get(&start).unwrap(),
+                animation_duration: DEFAULT_ANIMATION_LENGTH,
+                start_time: Instant::now(),
+            }
+        }
+
+        fn remove_event(
+            board: &AnimatedBoard,
+            start: BoardCoord,
+            end: BoardCoord,
+            intensity: f32,
+            spread: f32,
+            num_particles: usize,
+        ) -> AnimationEvent {
+            let screen_start = board.to_screen_coord_centered(start);
+            let screen_end = board.to_screen_coord_centered(end);
+            let angle = screen_end - screen_start;
+            AnimationEvent {
+                action: AnimationType::Remove {
+                    coord: end,
+                    angle,
+                    intensity,
+                    spread,
+                    num_particles,
+                    size: 6,
+                },
+                id: *board.coords.get(&end).unwrap(),
+                animation_duration: DEFAULT_ANIMATION_LENGTH,
+                start_time: Instant::now() + Duration::from_secs_f32(DEFAULT_ANIMATION_LENGTH),
+            }
+        }
+
+        // Helper functions to modify the hashmap
+        fn move_piece(coords: &mut HashMap<BoardCoord, usize>, start: BoardCoord, end: BoardCoord) {
+            let id = coords
+                .remove(&start)
+                .expect(format!("Expected piece at {:?} got none", start).as_str());
+            coords.insert(end, id);
+        }
+
+        fn remove(coords: &mut HashMap<BoardCoord, usize>, coord: BoardCoord) {
+            coords
+                .remove(&coord)
+                .expect(format!("Expected piece at {:?} got none", coord).as_str());
+        }
+
+        use MoveTypeCoords::*;
+        // Update interal board representation
+        match move_type_coords(&board.board, start, end) {
+            Normal { start, end } | Lunge { start, end } => {
+                let event = move_event(&self.coords, start, end);
+                self.event_queue.push(event);
+                move_piece(&mut self.coords, start, end);
+            }
+            Capture { start, end } => {
+                let move_event = move_event(&self.coords, start, end);
+                self.event_queue.push(move_event);
+                let distance_moved = (self.to_screen_coord_centered(end)
+                    - self.to_screen_coord_centered(start))
+                .norm();
+                let num_particles = (distance_moved / 4.0) as usize;
+                let remove_event =
+                    remove_event(&self, start, end, distance_moved, PI / 6.0, num_particles);
+                self.event_queue.push(remove_event);
+                move_piece(&mut self.coords, start, end);
+            }
+            Castle {
+                king_start,
+                king_end,
+                rook_start,
+                rook_end,
+            } => {
+                let king = move_event(&self.coords, king_start, king_end);
+                let rook = move_event(&self.coords, rook_start, rook_end);
+                self.event_queue.push(king);
+                self.event_queue.push(rook);
+                move_piece(&mut self.coords, king_start, king_end);
+                move_piece(&mut self.coords, rook_start, rook_end);
+            }
+            EnPassant {
+                start,
+                end,
+                captured_pawn,
+            } => {
+                let move_event = move_event(&self.coords, start, end);
+                let remove_event = AnimationEvent {
+                    action: AnimationType::Remove {
+                        coord: captured_pawn,
+                        angle: na::Vector2::new(1.0, 0.0),
+                        intensity: 35.0,
+                        spread: PI * 2.0,
+                        num_particles: 25,
+                        size: 6,
+                    },
+                    id: *self.coords.get(&captured_pawn).unwrap(),
+                    animation_duration: DEFAULT_ANIMATION_LENGTH,
+                    start_time: Instant::now() + Duration::from_secs_f32(DEFAULT_ANIMATION_LENGTH),
+                };
+
+                self.event_queue.push(move_event);
+                self.event_queue.push(remove_event);
+
+                move_piece(&mut self.coords, start, end);
+                remove(&mut self.coords, captured_pawn);
+            }
+        }
     }
 
     fn to_screen_coord(&self, board_coord: BoardCoord) -> mint::Point2<f32> {
         to_screen_coord(self.square_size, board_coord)
+    }
+
+    fn to_screen_coord_centered(&self, coord: BoardCoord) -> na::Point2<f32> {
+        na::Point2::from(self.to_screen_coord(coord))
+            + na::Vector2::new(self.square_size / 2.0, self.square_size / 2.0)
     }
 }
 
@@ -1019,6 +1261,7 @@ fn to_screen_coord(square_size: f32, board_coord: BoardCoord) -> mint::Point2<f3
 
 #[derive(Debug)]
 struct AnimatedPiece {
+    alive: bool,
     piece: Piece,
     pos: mint::Point2<f32>,
     start: mint::Point2<f32>,
@@ -1028,14 +1271,10 @@ struct AnimatedPiece {
     timer: f32,
     ani_length: f32,
     pre_delay: f32,
-    ease: Ease,
+    ease: ease::Ease,
 }
 
 impl AnimatedPiece {
-    fn from_piece(coord: mint::Point2<f32>, piece: Piece) -> AnimatedPiece {
-        AnimatedPiece::new(coord, coord, piece, DEFAULT_ANIMATION_LENGTH)
-    }
-
     fn new(
         start: mint::Point2<f32>,
         end: mint::Point2<f32>,
@@ -1043,6 +1282,7 @@ impl AnimatedPiece {
         ani_length: f32,
     ) -> AnimatedPiece {
         AnimatedPiece {
+            alive: true,
             pos: start,
             start,
             end,
@@ -1050,7 +1290,7 @@ impl AnimatedPiece {
             timer: 0.0,
             ani_length,
             pre_delay: DEFAULT_PREDELAY,
-            ease: Ease::InOutBack,
+            ease: ease::Ease::InOutBack,
         }
     }
 
@@ -1068,7 +1308,7 @@ impl AnimatedPiece {
         self.timer = 0.0;
         self.ani_length = DEFAULT_ANIMATION_LENGTH;
         self.pre_delay = 0.0;
-        self.ease = Ease::InOutCubic;
+        self.ease = ease::Ease::InOutCubic;
     }
 
     fn draw(
@@ -1087,54 +1327,9 @@ impl AnimatedPiece {
         };
         graphics::draw(ctx, text, (location, color))
     }
-}
 
-#[derive(Debug, Copy, Clone)]
-enum Ease {
-    Linear,
-    OutQuadratic,
-    InOutCubic,
-    OutElastic,
-    OutBack,
-    InOutBack,
-}
-
-impl Ease {
-    fn ease(&self, x: f32) -> f32 {
-        use Ease::*;
-        match self {
-            Linear => x,
-            OutQuadratic => 1.0 - (1.0 - x) * (1.0 - x),
-            InOutCubic => {
-                if x < 0.5 {
-                    4.0 * x * x * x
-                } else {
-                    1.0 - (-2.0 * x + 2.0).powf(3.0) / 2.0
-                }
-            }
-            OutElastic => {
-                let c4 = (2.0 * std::f32::consts::PI) / 3.0;
-                2.0f32.powf(-10.0 * x) * ((x * 10.0 - 0.75) * c4).sin() + 1.0
-            }
-            OutBack => {
-                let c1 = 1.70158;
-                let c3 = c1 + 1.0;
-                1.0 + c3 * (x - 1.0).powf(3.0) + c1 * (x - 1.0).powf(2.0)
-            }
-            InOutBack => {
-                let c1 = 1.70158;
-                let c2 = c1 * 1.525;
-                if x < 0.5 {
-                    ((2.0 * x).powf(2.0) * ((c2 + 1.0) * 2.0 * x - c2)) / 2.0
-                } else {
-                    ((2.0 * x - 2.0).powf(2.0) * ((c2 + 1.0) * (x * 2.0 - 2.0) + c2) + 2.0) / 2.0
-                }
-            }
-        }
-    }
-    fn interpolate(&self, start: f32, end: f32, percent: f32) -> f32 {
-        let percent = self.ease(percent);
-        return start * (1.0 - percent) + end * percent;
+    fn set_piecetype(&mut self, piece: PieceType) {
+        self.piece.piece = piece;
     }
 }
 
