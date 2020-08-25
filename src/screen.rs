@@ -279,7 +279,7 @@ impl TitleScreen {
         .collect();
 
         let mut black_selector = Selector::new(buttons.clone());
-        let mut white_selector = Selector::new(buttons.clone());
+        let mut white_selector = Selector::new(buttons);
 
         let mut white_selector_stack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
@@ -293,17 +293,15 @@ impl TitleScreen {
             min_dimensions: (None, None),
         };
 
-        let center_padding = FlexBox::new(1.0);
-        let mut center_padding2 = from_dims((30.0, 1.0));
-        // Unfortunately, Rust can't seem to infer the right type when the type is
-        // &mut dyn Layout for some reason.
+        // Unfortunately, Rust can't seem to infer the right type when the type
+        // is &mut dyn Layout for some reason, so we say it explicitly.
         let mut selector_stack: HStack<&mut dyn Layout> = hstack! {
             Some(SCREEN_WIDTH), None =>
-            center_padding.clone();
+            FlexBox::new(1.0);
             white_selector_stack;
-            center_padding2;
+            from_dims((30.0, 1.0));
             black_selector_stack;
-            center_padding.clone();
+            FlexBox::new(1.0);
         };
 
         let mut padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
@@ -607,10 +605,9 @@ impl Grid {
                     ai.next_move(&self.board, self.board.current_player)
                 {
                     if self.time_since_last_move >= MIN_TIME_BETWEEN_MOVES {
-                        self.board.check_turn(start, end).expect(&format!(
-                            "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
-                            self.board.current_player, start, end, self.board
-                        ));
+                        self.board
+                            .check_turn(start, end)
+                            .expect("AI made an illegal move");
                         Self::take_turn(
                             ctx,
                             &mut self.board,
@@ -626,10 +623,9 @@ impl Grid {
                 if let Some(coord) = self.board.need_promote() {
                     let piece = ai.next_promote(&self.board);
                     if let std::task::Poll::Ready(piece) = piece {
-                        self.board.check_promote(coord, piece).expect(&format!(
-                            "{} AI made illegal promote: {:?}\nboard:\n{:?}",
-                            self.board.current_player, piece, self.board
-                        ));
+                        self.board
+                            .check_promote(coord, piece)
+                            .expect("AI made an illegal promote");
                         Self::promote(&mut self.board, &mut self.grid, coord, piece);
                     }
                 }
@@ -664,13 +660,8 @@ impl Grid {
                     // On a mouse up, try moving the held piece to the current mouse position
                     let dragging = self.grid.to_grid_coord(mouse.last_down.unwrap());
                     let drop_loc = self.grid.to_grid_coord(mouse.pos);
-                    // This indicates that the mouse isn't actually holding a piece
-                    // or would be dropped outside of the grid
-                    if drop_loc.is_err() || dragging.is_err() {
-                        // do nothing, there's isn't an attempted move here
-                    } else {
-                        let start = dragging.unwrap();
-                        let end = drop_loc.unwrap();
+                    // If both the drag point and drop point are within the grid
+                    if let (Ok(start), Ok(end)) = (dragging, drop_loc) {
                         if self.board.check_turn(start, end).is_ok() {
                             // We don't ratelimit how fast humans can move since it's really unlikely they'll
                             // move too fast for the other player to see
@@ -1155,14 +1146,14 @@ impl AnimatedBoard {
         fn move_piece(coords: &mut HashMap<BoardCoord, usize>, start: BoardCoord, end: BoardCoord) {
             let id = coords
                 .remove(&start)
-                .expect(format!("Expected piece at {:?} got none", start).as_str());
+                .expect("HashMap did not contain piece--this is probably a desync earlier on");
             coords.insert(end, id);
         }
 
         fn remove(coords: &mut HashMap<BoardCoord, usize>, coord: BoardCoord) {
             coords
                 .remove(&coord)
-                .expect(format!("Expected piece at {:?} got none", coord).as_str());
+                .expect("HashMap did not contain piece--this is probably a desync earlier on");
         }
 
         use MoveTypeCoords::*;
@@ -1369,8 +1360,8 @@ impl GameSidebar {
         };
         self.status.text = text(status_text, ext_ctx.font, 25.0);
 
-        self.dead_black.text = text(piece_vec_str(&board.dead_black), ext_ctx.font, 30.0);
-        self.dead_white.text = text(piece_vec_str(&board.dead_white), ext_ctx.font, 30.0);
+        self.dead_black.text = text(piece_slice_to_str(&board.dead_black), ext_ctx.font, 30.0);
+        self.dead_white.text = text(piece_slice_to_str(&board.dead_white), ext_ctx.font, 30.0);
 
         // Update buttons
         self.main_menu.upd8(ctx);
@@ -1409,7 +1400,7 @@ impl GameSidebar {
     }
 }
 
-fn piece_vec_str(pieces: &Vec<Piece>) -> String {
+fn piece_slice_to_str(pieces: &[Piece]) -> String {
     let mut string = String::new();
     for (i, piece) in pieces.iter().enumerate() {
         string.push_str(piece.as_str());

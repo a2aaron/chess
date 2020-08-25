@@ -34,7 +34,7 @@ pub struct RandomPlayer {}
 impl AIPlayer for RandomPlayer {
     fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<Move> {
         let moves = board.board.get_all_moves(player);
-        if moves.len() == 0 {
+        if moves.is_empty() {
             panic!(format!("Expected AI player to have at least one valid move! Board is in {:?} and needs promote: {:?}", board.checkmate, board.need_promote()))
         }
         let rand_move = *moves.choose(&mut rand::thread_rng()).unwrap();
@@ -73,10 +73,7 @@ impl AIPlayer for MinOptPlayer {
             let opponent_moves = board.board.get_all_moves(player.opposite());
             let score = opponent_moves.len();
 
-            move_scores
-                .entry(score)
-                .or_insert(vec![])
-                .push((start, end));
+            move_scores.entry(score).or_default().push((start, end));
 
             if score < best_score {
                 best_score = score;

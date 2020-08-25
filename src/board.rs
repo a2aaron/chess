@@ -112,7 +112,7 @@ impl BoardState {
                 let captured_piece = self
                     .get(captured_coord)
                     .0
-                    .expect(&format!("Expected pawn at {:?}", captured_coord));
+                    .expect("Expected a pawn, got nothing!");
                 match captured_piece.color {
                     Black => self.dead_black.push(captured_piece),
                     White => self.dead_white.push(captured_piece),
@@ -146,7 +146,7 @@ impl BoardState {
     }
 
     pub fn need_promote(&self) -> Option<BoardCoord> {
-        return self.board.pawn_needs_promotion();
+        self.board.pawn_needs_promotion()
     }
 
     /// Checks if the promotion is legal. This function returns Err if there is
@@ -249,7 +249,7 @@ impl Board {
         let mut board = Board::blank();
         for (i, row) in str_board.iter().enumerate() {
             for (j, piece) in (*row).split_whitespace().enumerate() {
-                let color = match piece.chars().nth(0).unwrap() {
+                let color = match piece.chars().next().unwrap() {
                     'B' => Color::Black,
                     _ => Color::White,
                 };
@@ -816,10 +816,7 @@ impl Board {
             }
         }
 
-        match (num_knights, num_bishops) {
-            (0, 0) | (0, 1) | (1, 0) => true,
-            _ => false,
-        }
+        matches!((num_knights, num_bishops), (0, 0) | (0, 1) | (1, 0))
     }
 
     fn is_in_check(&self, player: Color) -> bool {
@@ -951,7 +948,7 @@ impl fmt::Display for Board {
             for piece in row {
                 write!(f, "{} ", piece)?;
             }
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         writeln!(f, "         WHITE")?;
         Ok(())
@@ -1048,30 +1045,34 @@ fn get_move_list_ignore_check(board: &Board, coord: BoardCoord, out: &mut MoveLi
 /// there is a pawn at `pos`.
 fn check_pawn(board: &Board, pos: BoardCoord, color: Color, out: &mut MoveList) {
     // Check forward space if it can be moved into.
-    let forwards = BoardCoord(pos.0, pos.1 + color.direction());
+    let forwards = BoardCoord::new((pos.0, pos.1 + color.direction()));
     let mut could_do_first_move = false;
-    if on_board(forwards) {
-        if board.get(forwards).0.is_none() {
+    match forwards {
+        Ok(forwards) if board.get(forwards).0.is_none() => {
             out.0.push(forwards);
             could_do_first_move = true;
         }
+        _ => (),
     }
 
     // if piece has not moved yet, check for double movement
-    let double_move = BoardCoord(pos.0, pos.1 + color.direction() * 2);
+    let double_move = BoardCoord::new((pos.0, pos.1 + color.direction() * 2));
     let pawn = board.get(pos).0.unwrap();
-    if on_board(double_move) {
-        if board.get(double_move).0.is_none() && !pawn.has_moved && could_do_first_move {
-            out.0.push(double_move);
+    match double_move {
+        Ok(double_move)
+            if board.get(double_move).0.is_none() && !pawn.has_moved && could_do_first_move =>
+        {
+            out.0.push(double_move)
         }
+        _ => (),
     }
 
     // Check diagonal spaces if they can be attacked.
     for &diagonal in &[
-        BoardCoord(pos.0 + 1, pos.1 + color.direction()),
-        BoardCoord(pos.0 - 1, pos.1 + color.direction()),
+        BoardCoord::new((pos.0 + 1, pos.1 + color.direction())),
+        BoardCoord::new((pos.0 - 1, pos.1 + color.direction())),
     ] {
-        if on_board(diagonal) {
+        if let Ok(diagonal) = diagonal {
             match board.get(diagonal).0 {
                 Some(piece) if piece.color != color => out.0.push(diagonal),
                 _ => {}
@@ -1239,7 +1240,7 @@ impl fmt::Display for MoveList {
                     write!(f, ".. ")?;
                 }
             }
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -2092,7 +2093,7 @@ mod tests {
         let mut move_list = MoveList(Vec::new());
         for (y, row) in array.iter().enumerate() {
             for (x, tile) in (*row).split_whitespace().enumerate() {
-                if tile.starts_with("#") {
+                if tile.starts_with('#') {
                     move_list
                         .0
                         .push(BoardCoord(x as i8, ((array.len() - 1) - y) as i8));

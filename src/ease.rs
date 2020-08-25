@@ -141,6 +141,6 @@ impl Ease {
     /// [0.0, 1.0]. This method does not clamp its output.
     pub fn interpolate(&self, start: f32, end: f32, percent: f32) -> f32 {
         let percent = self.ease(percent);
-        return start * (1.0 - percent) + end * percent;
+        start * (1.0 - percent) + end * percent
     }
 }

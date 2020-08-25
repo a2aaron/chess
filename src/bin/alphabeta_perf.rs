@@ -5,9 +5,6 @@ use chess::board;
 
 use ai::AIPlayer;
 
-#[cfg(feature = "perf")]
-use flamescope;
-
 fn main() {
     let now = Instant::now();
     let board = vec![
@@ -22,7 +19,7 @@ fn main() {
     ];
     let board = board::Board::from_string_vec(board);
     let old_board = board::BoardState::new(board.clone());
-    let mut board = board::BoardState::new(board.clone());
+    let mut board = board::BoardState::new(board);
     board.current_player = board::Color::Black;
 
     let mut alphabeta_ai = ai::TreeSearchPlayer::new(6);

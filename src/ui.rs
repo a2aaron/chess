@@ -185,7 +185,7 @@ impl TextBox {
             self.text.dimensions(ctx).0 as f32,
             self.text.dimensions(ctx).1 as f32,
         );
-        let text_offset = center_inside(self.bounding_box, from_dims(dims).into());
+        let text_offset = center_inside(self.bounding_box, from_dims(dims));
 
         graphics::draw(ctx, &self.text, (text_offset.point(), color))?;
 
