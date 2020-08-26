@@ -275,10 +275,17 @@ impl Board {
     /// always moves the pawn, even if would not actually be legal to do so in
     /// a real game, so you should check the move first.
     pub fn lunge(&mut self, coord: BoardCoord) {
-        let pawn = self.get_mut(coord);
-        pawn.set_just_lunged(true);
-        let direction = pawn.0.expect("Expected a pawn").color.direction();
-        let end = BoardCoord(coord.0, coord.1 + 2 * direction);
+        let end = match &mut self.get_mut(coord).0 {
+            Some(Piece {
+                piece: PieceType::Pawn { just_lunged },
+                color,
+                ..
+            }) => {
+                *just_lunged = true;
+                BoardCoord(coord.0, coord.1 + 2 * color.direction())
+            }
+            _ => panic!("Expected a pawn."),
+        };
         self.move_piece(coord, end);
     }
 
@@ -614,7 +621,13 @@ impl Board {
     fn clear_just_lunged(&mut self) {
         for i in ROWS {
             for j in COLS {
-                self.get_mut(BoardCoord(j, i)).set_just_lunged(false);
+                if let Some(Piece {
+                    piece: PieceType::Pawn { just_lunged },
+                    ..
+                }) = &mut self.get_mut(BoardCoord(j, i)).0
+                {
+                    *just_lunged = false;
+                }
             }
         }
     }
@@ -642,19 +655,23 @@ impl Board {
         }
 
         fn is_enemy_rook_or_queen(color: Color, piece: Option<Piece>) -> bool {
-            if let Some(piece) = piece {
-                return piece.color == color.opposite()
-                    && (piece.piece == PieceType::Rook || piece.piece == PieceType::Queen);
+            match piece {
+                Some(piece) => {
+                    piece.color == color.opposite()
+                        && (piece.piece == PieceType::Rook || piece.piece == PieceType::Queen)
+                }
+                None => false,
             }
-            false
         }
 
         fn is_enemy_bishop_or_queen(color: Color, piece: Option<Piece>) -> bool {
-            if let Some(piece) = piece {
-                return piece.color == color.opposite()
-                    && (piece.piece == PieceType::Bishop || piece.piece == PieceType::Queen);
+            match piece {
+                Some(piece) => {
+                    piece.color == color.opposite()
+                        && (piece.piece == PieceType::Bishop || piece.piece == PieceType::Queen)
+                }
+                None => false,
             }
-            false
         }
 
         // Check for rooks, queens (+)
@@ -705,9 +722,7 @@ impl Board {
             (0, -1),
         ];
         for delta in delta_coords.iter() {
-            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
-            if on_board_i8((x, y)) {
-                let check_coord = BoardCoord(x, y);
+            if let Ok(check_coord) = BoardCoord::new((target.0 + delta.0, target.1 + delta.1)) {
                 if self.get(check_coord).is(color.opposite(), PieceType::King) {
                     return false;
                 }
@@ -726,9 +741,7 @@ impl Board {
             (-2, -1),
         ];
         for delta in delta_coords.iter() {
-            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
-            if on_board_i8((x, y)) {
-                let check_coord = BoardCoord(x, y);
+            if let Ok(check_coord) = BoardCoord::new((target.0 + delta.0, target.1 + delta.1)) {
                 if self
                     .get(check_coord)
                     .is(color.opposite(), PieceType::Knight)
@@ -744,9 +757,7 @@ impl Board {
             Color::Black => [(1, -1), (-1, -1)],
         };
         for delta in delta_coords.iter() {
-            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
-            if on_board_i8((x, y)) {
-                let check_coord = BoardCoord(x, y);
+            if let Ok(check_coord) = BoardCoord::new((target.0 + delta.0, target.1 + delta.1)) {
                 if self
                     .get(check_coord)
                     .is(color.opposite(), PieceType::Pawn { just_lunged: false })
@@ -1124,20 +1135,20 @@ fn check_line_of_sight_piece(
 ) {
     for los in line_of_sights {
         for delta in los {
-            let end_pos = BoardCoord(pos.0 + delta.0, pos.1 + delta.1 * color.direction());
+            let end_pos =
+                match BoardCoord::new((pos.0 + delta.0, pos.1 + delta.1 * color.direction())) {
+                    Ok(end_pos) => end_pos,
+                    Err(_) => break,
+                };
 
-            if !on_board(end_pos) {
-                break;
-            }
-
-            let end_piece = board.get(end_pos).0;
-            if end_piece.is_none() {
-                out.0.push(end_pos);
-            } else if let Some(piece) = end_piece {
-                if piece.color != color {
-                    out.0.push(end_pos);
+            match board.get(end_pos).0 {
+                None => out.0.push(end_pos),
+                Some(piece) => {
+                    if piece.color != color {
+                        out.0.push(end_pos);
+                    }
+                    break;
                 }
-                break;
             }
         }
     }
@@ -1388,15 +1399,6 @@ impl Tile {
                 "Expected Tile to be Some piece, got None instead. set = {}",
                 set
             );
-        }
-    }
-
-    /// Set `just_lunged` flag on Pawn if the tile is a pawn. Else, do nothing.
-    pub fn set_just_lunged(&mut self, set: bool) {
-        if let Some(piece) = &mut self.0 {
-            if let PieceType::Pawn { just_lunged } = &mut piece.piece {
-                *just_lunged = set;
-            }
         }
     }
 
