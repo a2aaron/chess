@@ -106,7 +106,7 @@ struct TreeSearch {
     /// Max number of plys to search.
     max_depth: usize,
     /// The "expected" sequence of moves, has length of `max_depth`
-    principal_variation: Vec<Move>,
+    principal_variation: Vec<Option<Move>>,
     /// For debugging. Counts how many branches were "generated" (were seen by
     /// `get_all_moves()`)
     total_branches: usize,
@@ -166,7 +166,7 @@ impl TreeSearchPlayer {
         TreeSearchPlayer {
             state: TreeSearch {
                 max_depth,
-                principal_variation: vec![(BoardCoord(-1, -1), BoardCoord(-1, -1)); max_depth],
+                principal_variation: vec![None; max_depth],
                 total_branches: 0,
                 branches_searched: 0,
             },
@@ -178,7 +178,7 @@ impl TreeSearchPlayer {
 impl TreeSearch {
     fn search(&mut self, position: &BoardState, player: Color) -> (i32, Move) {
         let max_depth = self.max_depth;
-        let mut result = (0, (BoardCoord(-1, -1), BoardCoord(-1, -1)), -1, -1);
+        let mut result = (0, None, -1, -1);
         for i in 1..=max_depth {
             // TODO: This super hacky. Make max_depth a parameter on score instead.
             // [this_is_fine.dog.png]
@@ -187,7 +187,10 @@ impl TreeSearch {
             self.branches_searched = 0;
             result = self.score(position, 0, i32::MIN, i32::MAX, player);
         }
-        (result.0, result.1)
+        (
+            result.0,
+            result.1.expect("Expected search to return a move"),
+        )
     }
 
     #[cfg_attr(feature = "perf", flame)]
@@ -198,12 +201,12 @@ impl TreeSearch {
         mut alpha: i32,
         mut beta: i32,
         player: Color,
-    ) -> (i32, Move, i32, i32) {
+    ) -> (i32, Option<Move>, i32, i32) {
         // Score the leaf node if we hit max depth or the game would end
         if current_depth >= self.max_depth || position.game_over() {
             let score = self.score_leaf(current_depth, position, player);
             // println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
-            return (score, (BoardCoord(-2, -2), BoardCoord(-2, -2)), alpha, beta);
+            return (score, None, alpha, beta);
         }
 
         let mut moves = position.board.get_all_moves(position.current_player);
@@ -236,7 +239,7 @@ impl TreeSearch {
         let principal_move = self.principal_variation[current_depth];
         if let Some(i) = moves
             .iter()
-            .position(|&the_move| the_move == principal_move)
+            .position(|&the_move| Some(the_move) == principal_move)
         {
             moves.swap(0, i);
         }
@@ -260,7 +263,7 @@ impl TreeSearch {
                 if best_score < score {
                     alpha = alpha.max(score);
                     best_score = best_score.max(score);
-                    best_move = (start, end);
+                    best_move = Some((start, end));
 
                     if alpha >= beta {
                         // entering this block means that the move we just found is better than the worst possible outcome
@@ -274,7 +277,7 @@ impl TreeSearch {
                 if best_score > score {
                     beta = beta.min(score);
                     best_score = best_score.min(score);
-                    best_move = (start, end);
+                    best_move = Some((start, end));
 
                     if alpha >= beta {
                         // entering this block means that the opponent can always force a worse outcome for this than the
@@ -285,7 +288,7 @@ impl TreeSearch {
                 }
             }
             i += 1;
-            debug_assert!(best_move != (BoardCoord(-1, -1), BoardCoord(-1, -1)));
+            debug_assert!(best_move.is_some());
         }
 
         // Add the best moves found so far to the principal move list
@@ -426,7 +429,7 @@ impl TreeSearch {
         let mut their_position_score = 0;
         for i in 0..8 {
             for j in 0..8 {
-                let coord = BoardCoord(i, j);
+                let coord = BoardCoord::new((i, j)).expect("Expected a valid BoardCoord");
                 // offsets into the position tables
                 // we flip them vertically when playing as black because the
                 // tables are constructed for white's side
