@@ -249,23 +249,26 @@ impl Board {
         let mut board = Board::blank();
         for (i, row) in str_board.iter().enumerate() {
             for (j, piece) in (*row).split_whitespace().enumerate() {
-                let color = match piece.chars().next().unwrap() {
-                    'B' => Color::Black,
-                    _ => Color::White,
-                };
+                use Color::*;
                 use PieceType::*;
-                let x = j;
-                let y = i + (8 - str_board.len());
-                let tile = match piece.chars().nth(1).unwrap() {
-                    'P' => Tile::new(color, Pawn { just_lunged: false }),
-                    'N' => Tile::new(color, Knight),
-                    'B' => Tile::new(color, Bishop),
-                    'R' => Tile::new(color, Rook),
-                    'Q' => Tile::new(color, Queen),
-                    'K' => Tile::new(color, King),
+
+                let coord = BoardCoord(j as i8, (i + (8 - str_board.len())) as i8);
+                let tile = match piece {
+                    "BP" => Tile::new(Black, Pawn { just_lunged: false }),
+                    "BN" => Tile::new(Black, Knight),
+                    "BB" => Tile::new(Black, Bishop),
+                    "BR" => Tile::new(Black, Rook),
+                    "BQ" => Tile::new(Black, Queen),
+                    "BK" => Tile::new(Black, King),
+                    "WP" => Tile::new(White, Pawn { just_lunged: false }),
+                    "WN" => Tile::new(White, Knight),
+                    "WB" => Tile::new(White, Bishop),
+                    "WR" => Tile::new(White, Rook),
+                    "WQ" => Tile::new(White, Queen),
+                    "WK" => Tile::new(White, King),
                     _ => Tile::blank(),
                 };
-                board.board[y][x] = tile;
+                board.set(coord, tile);
             }
         }
         board
