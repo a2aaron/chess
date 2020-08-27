@@ -191,8 +191,7 @@ impl BoardState {
         }
     }
 
-    /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
-    /// would be off the board.
+    /// Get the `Tile` at `coord`.
     pub fn get(&self, coord: BoardCoord) -> &Tile {
         self.board.get(coord)
     }
@@ -921,7 +920,7 @@ impl Board {
         }));
     }
 
-    /// Gets the piece located at the coordinates
+    /// Gets the piece located at the coordinates.
     pub fn get(&self, BoardCoord(x, y): BoardCoord) -> &Tile {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
         &self.board[(7 - y) as usize][x as usize]
@@ -973,6 +972,7 @@ impl fmt::Display for Board {
 /// the top right. This is in line with how rank-file notation works~~, and also
 /// is how graphics should work~~
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct BoardCoord(pub i8, pub i8);
 
 impl BoardCoord {

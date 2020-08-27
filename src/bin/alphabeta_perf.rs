@@ -1,9 +1,7 @@
 use std::time::Instant;
 
-use chess::ai;
+use chess::ai::{self, AIPlayer};
 use chess::board;
-
-use ai::AIPlayer;
 
 fn main() {
     let now = Instant::now();

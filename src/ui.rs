@@ -4,9 +4,9 @@ use ggez::input;
 use ggez::mint;
 use ggez::{Context, GameResult};
 
+use crate::color;
 use crate::layout;
 use crate::rect::{center_inside, from_dims, get_dims};
-use crate::screen::color;
 
 #[derive(Debug, Clone)]
 pub struct Button {

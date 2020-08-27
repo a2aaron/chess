@@ -2,14 +2,6 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::ai::*;
-use crate::board::*;
-use crate::layout::*;
-use crate::particle;
-use crate::rect::*;
-use crate::ui::{draw_text, draw_text_workaround, Button, Selector, TextBox};
-use crate::{ease, hstack, vstack};
-
 use rand::Rng;
 
 use ggez::event::{EventHandler, MouseButton};
@@ -17,6 +9,19 @@ use ggez::graphics::{self, DrawParam, Rect, Text};
 use ggez::mint;
 use ggez::nalgebra as na;
 use ggez::{Context, GameResult};
+
+use chess::ai::{AIPlayer, RandomPlayer, TreeSearchPlayer};
+use chess::board::{
+    move_type_coords, Board, BoardCoord, BoardState, CheckmateState, Color, MoveTypeCoords, Piece,
+    PieceType, BISHOP_STR, KNIGHT_STR, QUEEN_STR, ROOK_STR,
+};
+use chess::color;
+use chess::ease;
+use chess::layout::{FlexBox, HStack, Layout, VStack};
+use chess::particle;
+use chess::rect;
+use chess::ui::{self, Button, Selector, TextBox};
+use chess::{hstack, vstack};
 
 const PI: f32 = std::f32::consts::PI;
 
@@ -32,28 +37,6 @@ const MIN_TIME_BETWEEN_MOVES: f32 = 1.0;
 const DEFAULT_ANIMATION_LENGTH: f32 = 0.22;
 const DEFAULT_PREDELAY: f32 = 0.3;
 const HARD_AI_MAX_DEPTH: usize = 6;
-
-#[allow(unused)]
-pub mod color {
-    use ggez::graphics::Color;
-    pub const RED: Color = Color::new(1.0, 0.0, 0.0, 1.0);
-    pub const YELLOW: Color = Color::new(1.0, 1.0, 0.0, 1.0);
-    pub const GREEN: Color = Color::new(0.0, 1.0, 0.0, 1.0);
-    pub const CYAN: Color = Color::new(0.0, 1.0, 1.0, 1.0);
-    pub const BLUE: Color = Color::new(0.0, 0.0, 1.0, 1.0);
-    pub const PURPLE: Color = Color::new(1.0, 0.0, 1.0, 1.0);
-    pub const WHITE: Color = Color::new(1.0, 1.0, 1.0, 1.0);
-    pub const LIGHT_GREY: Color = Color::new(0.5, 0.5, 0.5, 1.0);
-    pub const DARK_GREY: Color = Color::new(0.25, 0.25, 0.25, 1.0);
-    pub const BLACK: Color = Color::new(0.0, 0.0, 0.0, 1.0);
-    pub const TRANSPARENT: Color = Color::new(0.0, 0.0, 0.0, 0.0);
-    pub const TRANS_RED: Color = Color::new(1.0, 0.0, 0.0, 0.5);
-    pub const TRANS_YELLOW: Color = Color::new(1.0, 1.0, 0.0, 0.5);
-    pub const TRANS_GREEN: Color = Color::new(0.0, 1.0, 0.0, 0.5);
-    pub const TRANS_CYAN: Color = Color::new(0.0, 1.0, 1.0, 0.5);
-    pub const TRANS_BLUE: Color = Color::new(0.0, 0.0, 1.0, 0.5);
-    pub const TRANS_PURPLE: Color = Color::new(1.0, 0.0, 1.0, 0.5);
-}
 
 /// The entire game struct. This struct implements ggez's `EventHandler` and
 /// orchestrates howeverthing should work.
@@ -154,7 +137,7 @@ impl EventHandler for Game {
         // FPS counter
         let text = format!("{:.0}", ggez::timer::fps(ctx));
         let location = na::Point2::new(SCREEN_WIDTH - 20.0, 0.0);
-        draw_text(
+        ui::draw_text(
             ctx,
             text,
             self.ext_ctx.font,
@@ -267,7 +250,7 @@ pub struct TitleScreen {
 impl TitleScreen {
     fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
         let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
-        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
+        let mut upper_padding = rect::from_dims((1.0, SCREEN_HEIGHT * 0.10));
 
         let buttons: Vec<Button> = vec![
             text("Human", font, 30.0),
@@ -299,16 +282,16 @@ impl TitleScreen {
             Some(SCREEN_WIDTH), None =>
             FlexBox::new(1.0);
             white_selector_stack;
-            from_dims((30.0, 1.0));
+            rect::from_dims((30.0, 1.0));
             black_selector_stack;
             FlexBox::new(1.0);
         };
 
-        let mut padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
+        let mut padding = rect::from_dims((1.0, SCREEN_HEIGHT * 0.10));
         let mut start_game =
             Button::fit_to_text(ctx, (300.0, 35.0), text("Start Game", font, 30.0));
         let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
-        let mut padding2 = from_dims((1.0, 25.0));
+        let mut padding2 = rect::from_dims((1.0, 25.0));
 
         let mut vstack: VStack<&mut dyn Layout> = vstack! {
             Some(SCREEN_WIDTH), None =>
@@ -1009,7 +992,7 @@ impl AnimatedBoard {
         let mut pieces = Vec::with_capacity(32);
         for i in 0..8 {
             for j in 0..8 {
-                let coord = BoardCoord(i, j);
+                let coord = BoardCoord::new((i, j)).expect("Expected a valid BoardCoord");
                 if let Some(piece) = board.get(coord).0 {
                     let end = to_screen_coord(square_size, coord);
                     let start = match piece.color {
@@ -1089,7 +1072,7 @@ impl AnimatedBoard {
         for piece in self.pieces.iter().filter(|piece| piece.alive) {
             piece.draw(ctx, ext_ctx, self.square_size)?;
         }
-        draw_text_workaround(ctx);
+        ui::draw_text_workaround(ctx);
         Ok(())
     }
 

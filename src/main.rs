@@ -1,10 +1,12 @@
-use chess::screen;
+#![feature(clamp)]
+
+mod screen;
+
+use std::io;
 
 use ggez::conf;
 use ggez::event;
 use ggez::ContextBuilder;
-
-use std::io;
 
 /// Read a string from standard in, optionally printing a message to the user if
 /// provided. The inputted string will not contain a trailing newline.

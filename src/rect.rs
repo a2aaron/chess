@@ -1,5 +1,4 @@
-use ggez::graphics::mint;
-use ggez::graphics::Rect;
+use ggez::graphics::{mint, Rect};
 
 /// Returns a point located at the center of `rect`. Assumes that `rect.x` and
 /// `rect.y` define the upper left corner of the Rect and that rectangles
