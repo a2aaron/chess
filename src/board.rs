@@ -250,8 +250,12 @@ impl Board {
             for (j, piece) in (*row).split_whitespace().enumerate() {
                 use Color::*;
                 use PieceType::*;
-
-                let coord = BoardCoord(j as i8, (i + (8 - str_board.len())) as i8);
+                // We parse the string board from top to bottom. This means we
+                // start at  y = 7 and progress down towards y = 0. Hence, we subtract
+                // one so that when str_board.len() is 8 and i = 0, we get y = 7
+                // (smaller values of str_board.len() will do the right thing--
+                // start from the highest value of y and decrease towards zero)
+                let coord = BoardCoord(j as i8, ((str_board.len() - 1) - i) as i8);
                 let tile = match piece {
                     "BP" => Tile::new(Black, Pawn { just_lunged: false }),
                     "BN" => Tile::new(Black, Knight),
@@ -267,7 +271,7 @@ impl Board {
                     "WK" => Tile::new(White, King),
                     _ => Tile::blank(),
                 };
-                board.set(coord, tile);
+                board.set(coord, tile)
             }
         }
         board
