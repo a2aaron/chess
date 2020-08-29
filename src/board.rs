@@ -967,6 +967,23 @@ impl MoveList {
     }
 }
 
+impl fmt::Display for MoveList {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for i in ROWS {
+            for j in COLS {
+                let coord = BoardCoord(j, 7 - i);
+                if self.0.contains(&coord) {
+                    write!(f, "## ")?;
+                } else {
+                    write!(f, ".. ")?;
+                }
+            }
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+}
+
 /// Return a MoveList of the piece located at `coord`.
 /// This function DOES check if a move made by the King would put the King into
 /// check and DOES NOT check if the King can castle. It also DOES NOT check if
@@ -1212,23 +1229,6 @@ pub fn on_board(pos: BoardCoord) -> bool {
 /// Return true if `pos` would be actually on the board.
 pub fn on_board_i8(pos: (i8, i8)) -> bool {
     0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
-}
-
-impl fmt::Display for MoveList {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for i in ROWS {
-            for j in COLS {
-                let coord = BoardCoord(j, 7 - i);
-                if self.0.contains(&coord) {
-                    write!(f, "## ")?;
-                } else {
-                    write!(f, ".. ")?;
-                }
-            }
-            writeln!(f)?;
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

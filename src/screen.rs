@@ -1,5 +1,4 @@
-use std::collections::BinaryHeap;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::time::{Duration, Instant};
 
 use rand::Rng;
