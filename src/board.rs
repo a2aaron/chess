@@ -23,8 +23,6 @@ pub struct BoardState {
     pub board: Board,
     /// The color of the player-to-move
     pub current_player: Color,
-    pub dead_black: Vec<Piece>,
-    pub dead_white: Vec<Piece>,
     pub checkmate: CheckmateState,
 }
 
@@ -36,8 +34,6 @@ impl BoardState {
         BoardState {
             board,
             current_player: Color::White,
-            dead_black: Vec::new(),
-            dead_white: Vec::new(),
             checkmate,
         }
     }
@@ -79,21 +75,8 @@ impl BoardState {
                 self.board.clear_just_lunged();
                 self.board.castle(color, side);
             }
-            Normal => {
+            Normal | Capture => {
                 self.board.clear_just_lunged();
-                self.board.move_piece(start, end)
-            }
-            Capture => {
-                self.board.clear_just_lunged();
-                let captured_piece = self
-                    .get(end)
-                    .0
-                    .expect("Expected piece to be present at end on a capture!");
-                match captured_piece.color {
-                    Black => self.dead_black.push(captured_piece),
-                    White => self.dead_white.push(captured_piece),
-                }
-
                 self.board.move_piece(start, end)
             }
             Lunge => {
@@ -101,23 +84,7 @@ impl BoardState {
                 self.board.clear_just_lunged();
                 self.board.lunge(start);
             }
-            EnPassant(side) => {
-                use BoardSide::*;
-                let captured_coord = match side {
-                    Kingside => BoardCoord(start.0 + 1, start.1),
-                    Queenside => BoardCoord(start.0 - 1, start.1),
-                };
-
-                // Add the captured pawn to the dead piece list
-                let captured_piece = self
-                    .get(captured_coord)
-                    .0
-                    .expect("Expected a pawn, got nothing!");
-                match captured_piece.color {
-                    Black => self.dead_black.push(captured_piece),
-                    White => self.dead_white.push(captured_piece),
-                }
-
+            EnPassant(_) => {
                 self.board.enpassant(start, end);
                 // Don't clear the lunge flag until _after_ we check for enpassant
                 // (otherwise we will never be able to :P)

@@ -447,6 +447,8 @@ impl Grid {
                 ),
                 status: TextBox::new((110.0, 100.0)),
                 promote_buttons,
+                dead_black_list: vec![],
+                dead_white_list: vec![],
                 dead_black: TextBox::new((110.0, 100.0)),
                 dead_white: TextBox::new((110.0, 100.0)),
             },
@@ -591,16 +593,19 @@ impl Grid {
                         self.board
                             .check_turn(start, end)
                             .expect("AI made an illegal move");
-                        Self::take_turn(
-                            ctx,
-                            &mut self.board,
-                            &mut self.grid,
-                            &mut self.time_since_last_move,
-                            start,
-                            end,
-                        );
+                        self.take_turn(ctx, start, end);
                     }
                 }
+            }
+            // We have to do this reborrow here because rust can't seem to figure out
+            // the lifetimes otherwise (it complains that reusing `ai` down here would
+            // result in a double mutable borrow, so we do this to end the lifetime of
+            // `ai` early)
+            let ai = match self.board.current_player {
+                Color::White => &mut self.ai_white,
+                Color::Black => &mut self.ai_black,
+            };
+            if let Some(ai) = ai {
                 // If this move would require the AI to promote a piece, then ask
                 // the AI to promote the piece.
                 if let Some(coord) = self.board.need_promote() {
@@ -648,14 +653,7 @@ impl Grid {
                         if self.board.check_turn(start, end).is_ok() {
                             // We don't ratelimit how fast humans can move since it's really unlikely they'll
                             // move too fast for the other player to see
-                            Self::take_turn(
-                                ctx,
-                                &mut self.board,
-                                &mut self.grid,
-                                &mut self.time_since_last_move,
-                                start,
-                                end,
-                            );
+                            self.take_turn(ctx, start, end);
                         }
                     }
                 }
@@ -692,21 +690,34 @@ impl Grid {
     }
 
     // Move the piece from start to end and update the last move/animation boards
-    fn take_turn(
-        _ctx: &mut Context,
-        board: &mut BoardState,
-        board_view: &mut BoardView,
-        time_since_last_move: &mut f32,
-        start: BoardCoord,
-        end: BoardCoord,
-    ) {
+    fn take_turn(&mut self, _ctx: &mut Context, start: BoardCoord, end: BoardCoord) {
+        // In the event of a capture, add the piece to the appropriate list
+        match move_type_coords(&self.board.board, start, end) {
+            MoveTypeCoords::Capture { end: capture, .. }
+            | MoveTypeCoords::EnPassant {
+                captured_pawn: capture,
+                ..
+            } => {
+                let piece = self
+                    .board
+                    .get(capture)
+                    .0
+                    .expect("Expected capture to have a piece");
+                match piece.color {
+                    Color::Black => self.sidebar.dead_black_list.push(piece.piece),
+                    Color::White => self.sidebar.dead_white_list.push(piece.piece),
+                }
+            }
+            _ => (),
+        }
+
         // Update the view first here because we want it to work off of the state
         // of board _before_ we make the actual move
-        board_view.take_turn(board, start, end);
-        board.take_turn(start, end);
+        self.grid.take_turn(&self.board, start, end);
+        self.board.take_turn(start, end);
 
         // Set the time since the last move so the AI does not move immediately.
-        *time_since_last_move = 0.0;
+        self.time_since_last_move = 0.0;
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -1320,7 +1331,8 @@ struct GameSidebar {
     promote_buttons: Vec<(Button, PieceType)>,
     // Displays who's turn it is and if there is check/checkmate/etc or not
     status: TextBox,
-    // Lists the dead piece for each player.
+    dead_black_list: Vec<PieceType>,
+    dead_white_list: Vec<PieceType>,
     dead_black: TextBox,
     dead_white: TextBox,
 }
@@ -1343,8 +1355,16 @@ impl GameSidebar {
         };
         self.status.text = text(status_text, ext_ctx.font, 25.0);
 
-        self.dead_black.text = text(piece_slice_to_str(&board.dead_black), ext_ctx.font, 30.0);
-        self.dead_white.text = text(piece_slice_to_str(&board.dead_white), ext_ctx.font, 30.0);
+        self.dead_black.text = text(
+            piece_slice_to_str(&self.dead_black_list),
+            ext_ctx.font,
+            30.0,
+        );
+        self.dead_white.text = text(
+            piece_slice_to_str(&self.dead_white_list),
+            ext_ctx.font,
+            30.0,
+        );
 
         // Update buttons
         self.main_menu.upd8(ctx);
@@ -1383,7 +1403,8 @@ impl GameSidebar {
     }
 }
 
-fn piece_slice_to_str(pieces: &[Piece]) -> String {
+/// Convert a list of pieces to their string representation.
+fn piece_slice_to_str(pieces: &[PieceType]) -> String {
     let mut string = String::new();
     for (i, piece) in pieces.iter().enumerate() {
         string.push_str(piece.as_str());
