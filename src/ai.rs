@@ -10,8 +10,19 @@ use crate::board::*;
 
 type Move = (BoardCoord, BoardCoord);
 
+/// This trait describes a computer player. An AIPlayer will have `next_move`
+/// called with a certain board position and a player, and is expected to return
+/// a legal move. Note that the return type is a `Poll`, so the AIPlayer may
+/// spawn a thread if it takes a while to search for the right move. While the
+/// player searches, it is expected to return `Poll::Pending`. If this is the case
+/// `next_move` will be re-called intermittenly until it returns Poll::Ready
 pub trait AIPlayer: std::fmt::Debug {
+    /// Given a board, this function should return the next move the AI intends
+    /// to play.
     fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<Move>;
+    /// Given a board that requires a promotion for a pawn, return what piece the
+    /// pawn should be promoted to. By default, this is always a queen, but can
+    /// be manually overridden if desired.
     fn next_promote(&mut self, _board: &BoardState) -> Poll<PieceType> {
         Poll::Ready(PieceType::Queen)
     }
@@ -23,7 +34,7 @@ pub struct RandomPlayer {}
 impl AIPlayer for RandomPlayer {
     fn next_move(&mut self, board: &BoardState, player: Color) -> Poll<Move> {
         let moves = board.board.get_all_moves(player);
-        if moves.len() == 0 {
+        if moves.is_empty() {
             panic!(format!("Expected AI player to have at least one valid move! Board is in {:?} and needs promote: {:?}", board.checkmate, board.need_promote()))
         }
         let rand_move = *moves.choose(&mut rand::thread_rng()).unwrap();
@@ -62,10 +73,7 @@ impl AIPlayer for MinOptPlayer {
             let opponent_moves = board.board.get_all_moves(player.opposite());
             let score = opponent_moves.len();
 
-            move_scores
-                .entry(score)
-                .or_insert(vec![])
-                .push((start, end));
+            move_scores.entry(score).or_default().push((start, end));
 
             if score < best_score {
                 best_score = score;
@@ -90,12 +98,20 @@ pub struct TreeSearchPlayer {
     // If none, then no thread is currently running.
     reciever: Option<mpsc::Receiver<((i32, Move), TreeSearch)>>,
 }
+
+/// Helper struct for TreeSearchPlayer containing all of the relevant state and
+/// searhc parameters
 #[derive(Debug, Clone)]
 struct TreeSearch {
+    /// Max number of plys to search.
     max_depth: usize,
-    // Unfortunately, AIs can not dance, so this is always empty
-    principal_variation: Vec<Move>,
+    /// The "expected" sequence of moves, has length of `max_depth`
+    principal_variation: Vec<Option<Move>>,
+    /// For debugging. Counts how many branches were "generated" (were seen by
+    /// `get_all_moves()`)
     total_branches: usize,
+    /// For debugging. Counts how many branches were actually searched (has `search()`
+    /// called on them)
     branches_searched: usize,
 }
 
@@ -107,9 +123,11 @@ impl AIPlayer for TreeSearchPlayer {
                 let (sender, reciever) = mpsc::channel();
                 // We have to do these clones because the board needs to outlive
                 // the thread and Rust can't prove that board actually does that
-                // (This would cause problems, for example, if there was code in screen.rs
-                // that modified the board while the thread ran!)
+                // (This would cause problems, for example, if there was code in
+                // screen.rs that modified the board while the thread ran!)
                 // Thus, we must work on a copy of the board.
+                // TODO: Consider not using a BoardState internally--instead something
+                // faster like a bitboard.
                 let board = board.clone();
                 let mut treesearch = self.state.clone();
                 std::thread::spawn(move || {
@@ -148,7 +166,7 @@ impl TreeSearchPlayer {
         TreeSearchPlayer {
             state: TreeSearch {
                 max_depth,
-                principal_variation: vec![(BoardCoord(-1, -1), BoardCoord(-1, -1)); max_depth],
+                principal_variation: vec![None; max_depth],
                 total_branches: 0,
                 branches_searched: 0,
             },
@@ -160,7 +178,7 @@ impl TreeSearchPlayer {
 impl TreeSearch {
     fn search(&mut self, position: &BoardState, player: Color) -> (i32, Move) {
         let max_depth = self.max_depth;
-        let mut result = (0, (BoardCoord(-1, -1), BoardCoord(-1, -1)), -1, -1);
+        let mut result = (0, None, -1, -1);
         for i in 1..=max_depth {
             // TODO: This super hacky. Make max_depth a parameter on score instead.
             // [this_is_fine.dog.png]
@@ -169,7 +187,10 @@ impl TreeSearch {
             self.branches_searched = 0;
             result = self.score(position, 0, i32::MIN, i32::MAX, player);
         }
-        (result.0, result.1)
+        (
+            result.0,
+            result.1.expect("Expected search to return a move"),
+        )
     }
 
     #[cfg_attr(feature = "perf", flame)]
@@ -180,12 +201,12 @@ impl TreeSearch {
         mut alpha: i32,
         mut beta: i32,
         player: Color,
-    ) -> (i32, Move, i32, i32) {
+    ) -> (i32, Option<Move>, i32, i32) {
         // Score the leaf node if we hit max depth or the game would end
         if current_depth >= self.max_depth || position.game_over() {
             let score = self.score_leaf(current_depth, position, player);
             // println!("{}Leaf node score: {:?}", "\t".repeat(current_depth), score);
-            return (score, (BoardCoord(-2, -2), BoardCoord(-2, -2)), alpha, beta);
+            return (score, None, alpha, beta);
         }
 
         let mut moves = position.board.get_all_moves(position.current_player);
@@ -218,7 +239,7 @@ impl TreeSearch {
         let principal_move = self.principal_variation[current_depth];
         if let Some(i) = moves
             .iter()
-            .position(|&the_move| the_move == principal_move)
+            .position(|&the_move| Some(the_move) == principal_move)
         {
             moves.swap(0, i);
         }
@@ -242,7 +263,7 @@ impl TreeSearch {
                 if best_score < score {
                     alpha = alpha.max(score);
                     best_score = best_score.max(score);
-                    best_move = (start, end);
+                    best_move = Some((start, end));
 
                     if alpha >= beta {
                         // entering this block means that the move we just found is better than the worst possible outcome
@@ -256,7 +277,7 @@ impl TreeSearch {
                 if best_score > score {
                     beta = beta.min(score);
                     best_score = best_score.min(score);
-                    best_move = (start, end);
+                    best_move = Some((start, end));
 
                     if alpha >= beta {
                         // entering this block means that the opponent can always force a worse outcome for this than the
@@ -267,20 +288,13 @@ impl TreeSearch {
                 }
             }
             i += 1;
-            debug_assert!(best_move != (BoardCoord(-1, -1), BoardCoord(-1, -1)));
+            debug_assert!(best_move.is_some());
         }
 
         // Add the best moves found so far to the principal move list
         self.principal_variation[current_depth] = best_move;
 
         self.branches_searched += i;
-        // println!(
-        //     "{} principal moves: {:?} {:?} (at depth: {})",
-        //     "\t".repeat(current_depth),
-        //     best_move,
-        //     second_best_move,
-        //     current_depth,
-        // );
 
         (best_score, best_move, alpha, beta)
     }
@@ -415,7 +429,7 @@ impl TreeSearch {
         let mut their_position_score = 0;
         for i in 0..8 {
             for j in 0..8 {
-                let coord = BoardCoord(i, j);
+                let coord = BoardCoord::new((i, j)).expect("Expected a valid BoardCoord");
                 // offsets into the position tables
                 // we flip them vertically when playing as black because the
                 // tables are constructed for white's side

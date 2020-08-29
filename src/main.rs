@@ -1,11 +1,15 @@
-use chess::screen;
+#![feature(clamp)]
+
+mod screen;
+
+use std::io;
 
 use ggez::conf;
 use ggez::event;
 use ggez::ContextBuilder;
 
-use std::io;
-
+/// Read a string from standard in, optionally printing a message to the user if
+/// provided. The inputted string will not contain a trailing newline.
 pub fn read_string_from_stdin(message: Option<String>) -> String {
     if let Some(x) = message {
         println!("{}", x);
@@ -19,6 +23,8 @@ fn main() {
     let mut cb = ContextBuilder::new("chess", "a2aaron");
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         // Add the resources path so we can use it.
+        // The path will be in a folder called "resources"
+        // You can load things from it using paths like "\\my_file.txt"
         let mut path = std::path::PathBuf::from(manifest_dir);
         path.push("resources");
         println!("Adding path {:?}", path);

@@ -23,8 +23,6 @@ pub struct BoardState {
     pub board: Board,
     /// The color of the player-to-move
     pub current_player: Color,
-    pub dead_black: Vec<Piece>,
-    pub dead_white: Vec<Piece>,
     pub checkmate: CheckmateState,
 }
 
@@ -36,8 +34,6 @@ impl BoardState {
         BoardState {
             board,
             current_player: Color::White,
-            dead_black: Vec::new(),
-            dead_white: Vec::new(),
             checkmate,
         }
     }
@@ -79,21 +75,8 @@ impl BoardState {
                 self.board.clear_just_lunged();
                 self.board.castle(color, side);
             }
-            Normal => {
+            Normal | Capture => {
                 self.board.clear_just_lunged();
-                self.board.move_piece(start, end)
-            }
-            Capture => {
-                self.board.clear_just_lunged();
-                let captured_piece = self
-                    .get(end)
-                    .0
-                    .expect("Expected piece to be present at end on a capture!");
-                match captured_piece.color {
-                    Black => self.dead_black.push(captured_piece),
-                    White => self.dead_white.push(captured_piece),
-                }
-
                 self.board.move_piece(start, end)
             }
             Lunge => {
@@ -101,23 +84,7 @@ impl BoardState {
                 self.board.clear_just_lunged();
                 self.board.lunge(start);
             }
-            EnPassant(side) => {
-                use BoardSide::*;
-                let captured_coord = match side {
-                    Kingside => BoardCoord(start.0 + 1, start.1),
-                    Queenside => BoardCoord(start.0 - 1, start.1),
-                };
-
-                // Add the captured pawn to the dead piece list
-                let captured_piece = self
-                    .get(captured_coord)
-                    .0
-                    .expect(&format!("Expected pawn at {:?}", captured_coord));
-                match captured_piece.color {
-                    Black => self.dead_black.push(captured_piece),
-                    White => self.dead_white.push(captured_piece),
-                }
-
+            EnPassant(_) => {
                 self.board.enpassant(start, end);
                 // Don't clear the lunge flag until _after_ we check for enpassant
                 // (otherwise we will never be able to :P)
@@ -146,7 +113,7 @@ impl BoardState {
     }
 
     pub fn need_promote(&self) -> Option<BoardCoord> {
-        return self.board.pawn_needs_promotion();
+        self.board.pawn_needs_promotion()
     }
 
     /// Checks if the promotion is legal. This function returns Err if there is
@@ -191,8 +158,7 @@ impl BoardState {
         }
     }
 
-    /// Try to get the `Tile` at `coord`. This function returns `None` if `coord`
-    /// would be off the board.
+    /// Get the `Tile` at `coord`.
     pub fn get(&self, coord: BoardCoord) -> &Tile {
         self.board.get(coord)
     }
@@ -249,23 +215,30 @@ impl Board {
         let mut board = Board::blank();
         for (i, row) in str_board.iter().enumerate() {
             for (j, piece) in (*row).split_whitespace().enumerate() {
-                let color = match piece.chars().nth(0).unwrap() {
-                    'B' => Color::Black,
-                    _ => Color::White,
-                };
+                use Color::*;
                 use PieceType::*;
-                let x = j;
-                let y = i + (8 - str_board.len());
-                let tile = match piece.chars().nth(1).unwrap() {
-                    'P' => Tile::new(color, Pawn { just_lunged: false }),
-                    'N' => Tile::new(color, Knight),
-                    'B' => Tile::new(color, Bishop),
-                    'R' => Tile::new(color, Rook),
-                    'Q' => Tile::new(color, Queen),
-                    'K' => Tile::new(color, King),
+                // We parse the string board from top to bottom. This means we
+                // start at  y = 7 and progress down towards y = 0. Hence, we subtract
+                // one so that when str_board.len() is 8 and i = 0, we get y = 7
+                // (smaller values of str_board.len() will do the right thing--
+                // start from the highest value of y and decrease towards zero)
+                let coord = BoardCoord(j as i8, ((str_board.len() - 1) - i) as i8);
+                let tile = match piece {
+                    "BP" => Tile::new(Black, Pawn { just_lunged: false }),
+                    "BN" => Tile::new(Black, Knight),
+                    "BB" => Tile::new(Black, Bishop),
+                    "BR" => Tile::new(Black, Rook),
+                    "BQ" => Tile::new(Black, Queen),
+                    "BK" => Tile::new(Black, King),
+                    "WP" => Tile::new(White, Pawn { just_lunged: false }),
+                    "WN" => Tile::new(White, Knight),
+                    "WB" => Tile::new(White, Bishop),
+                    "WR" => Tile::new(White, Rook),
+                    "WQ" => Tile::new(White, Queen),
+                    "WK" => Tile::new(White, King),
                     _ => Tile::blank(),
                 };
-                board.board[y][x] = tile;
+                board.set(coord, tile)
             }
         }
         board
@@ -275,10 +248,17 @@ impl Board {
     /// always moves the pawn, even if would not actually be legal to do so in
     /// a real game, so you should check the move first.
     pub fn lunge(&mut self, coord: BoardCoord) {
-        let pawn = self.get_mut(coord);
-        pawn.set_just_lunged(true);
-        let direction = pawn.0.expect("Expected a pawn").color.direction();
-        let end = BoardCoord(coord.0, coord.1 + 2 * direction);
+        let end = match &mut self.get_mut(coord).0 {
+            Some(Piece {
+                piece: PieceType::Pawn { just_lunged },
+                color,
+                ..
+            }) => {
+                *just_lunged = true;
+                BoardCoord(coord.0, coord.1 + 2 * color.direction())
+            }
+            _ => panic!("Expected a pawn."),
+        };
         self.move_piece(coord, end);
     }
 
@@ -614,7 +594,13 @@ impl Board {
     fn clear_just_lunged(&mut self) {
         for i in ROWS {
             for j in COLS {
-                self.get_mut(BoardCoord(j, i)).set_just_lunged(false);
+                if let Some(Piece {
+                    piece: PieceType::Pawn { just_lunged },
+                    ..
+                }) = &mut self.get_mut(BoardCoord(j, i)).0
+                {
+                    *just_lunged = false;
+                }
             }
         }
     }
@@ -642,19 +628,23 @@ impl Board {
         }
 
         fn is_enemy_rook_or_queen(color: Color, piece: Option<Piece>) -> bool {
-            if let Some(piece) = piece {
-                return piece.color == color.opposite()
-                    && (piece.piece == PieceType::Rook || piece.piece == PieceType::Queen);
+            match piece {
+                Some(piece) => {
+                    piece.color == color.opposite()
+                        && (piece.piece == PieceType::Rook || piece.piece == PieceType::Queen)
+                }
+                None => false,
             }
-            false
         }
 
         fn is_enemy_bishop_or_queen(color: Color, piece: Option<Piece>) -> bool {
-            if let Some(piece) = piece {
-                return piece.color == color.opposite()
-                    && (piece.piece == PieceType::Bishop || piece.piece == PieceType::Queen);
+            match piece {
+                Some(piece) => {
+                    piece.color == color.opposite()
+                        && (piece.piece == PieceType::Bishop || piece.piece == PieceType::Queen)
+                }
+                None => false,
             }
-            false
         }
 
         // Check for rooks, queens (+)
@@ -705,9 +695,7 @@ impl Board {
             (0, -1),
         ];
         for delta in delta_coords.iter() {
-            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
-            if on_board_i8((x, y)) {
-                let check_coord = BoardCoord(x, y);
+            if let Ok(check_coord) = BoardCoord::new((target.0 + delta.0, target.1 + delta.1)) {
                 if self.get(check_coord).is(color.opposite(), PieceType::King) {
                     return false;
                 }
@@ -726,9 +714,7 @@ impl Board {
             (-2, -1),
         ];
         for delta in delta_coords.iter() {
-            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
-            if on_board_i8((x, y)) {
-                let check_coord = BoardCoord(x, y);
+            if let Ok(check_coord) = BoardCoord::new((target.0 + delta.0, target.1 + delta.1)) {
                 if self
                     .get(check_coord)
                     .is(color.opposite(), PieceType::Knight)
@@ -744,9 +730,7 @@ impl Board {
             Color::Black => [(1, -1), (-1, -1)],
         };
         for delta in delta_coords.iter() {
-            let (x, y) = (target.0 + delta.0, target.1 + delta.1);
-            if on_board_i8((x, y)) {
-                let check_coord = BoardCoord(x, y);
+            if let Ok(check_coord) = BoardCoord::new((target.0 + delta.0, target.1 + delta.1)) {
                 if self
                     .get(check_coord)
                     .is(color.opposite(), PieceType::Pawn { just_lunged: false })
@@ -816,10 +800,7 @@ impl Board {
             }
         }
 
-        match (num_knights, num_bishops) {
-            (0, 0) | (0, 1) | (1, 0) => true,
-            _ => false,
-        }
+        matches!((num_knights, num_bishops), (0, 0) | (0, 1) | (1, 0))
     }
 
     fn is_in_check(&self, player: Color) -> bool {
@@ -910,7 +891,7 @@ impl Board {
         }));
     }
 
-    /// Gets the piece located at the coordinates
+    /// Gets the piece located at the coordinates.
     pub fn get(&self, BoardCoord(x, y): BoardCoord) -> &Tile {
         // i promise very very hard that this i8 is, in fact, in the range 0-7
         &self.board[(7 - y) as usize][x as usize]
@@ -951,7 +932,7 @@ impl fmt::Display for Board {
             for piece in row {
                 write!(f, "{} ", piece)?;
             }
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         writeln!(f, "         WHITE")?;
         Ok(())
@@ -962,6 +943,7 @@ impl fmt::Display for Board {
 /// the top right. This is in line with how rank-file notation works~~, and also
 /// is how graphics should work~~
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct BoardCoord(pub i8, pub i8);
 
 impl BoardCoord {
@@ -982,6 +964,23 @@ impl MoveList {
         // A queen on an empty board has up to 28 possible moves it can make
         // (7 for each of its 4 lines of sight)
         MoveList(Vec::with_capacity(28))
+    }
+}
+
+impl fmt::Display for MoveList {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for i in ROWS {
+            for j in COLS {
+                let coord = BoardCoord(j, 7 - i);
+                if self.0.contains(&coord) {
+                    write!(f, "## ")?;
+                } else {
+                    write!(f, ".. ")?;
+                }
+            }
+            writeln!(f)?;
+        }
+        Ok(())
     }
 }
 
@@ -1048,30 +1047,34 @@ fn get_move_list_ignore_check(board: &Board, coord: BoardCoord, out: &mut MoveLi
 /// there is a pawn at `pos`.
 fn check_pawn(board: &Board, pos: BoardCoord, color: Color, out: &mut MoveList) {
     // Check forward space if it can be moved into.
-    let forwards = BoardCoord(pos.0, pos.1 + color.direction());
+    let forwards = BoardCoord::new((pos.0, pos.1 + color.direction()));
     let mut could_do_first_move = false;
-    if on_board(forwards) {
-        if board.get(forwards).0.is_none() {
+    match forwards {
+        Ok(forwards) if board.get(forwards).0.is_none() => {
             out.0.push(forwards);
             could_do_first_move = true;
         }
+        _ => (),
     }
 
     // if piece has not moved yet, check for double movement
-    let double_move = BoardCoord(pos.0, pos.1 + color.direction() * 2);
+    let double_move = BoardCoord::new((pos.0, pos.1 + color.direction() * 2));
     let pawn = board.get(pos).0.unwrap();
-    if on_board(double_move) {
-        if board.get(double_move).0.is_none() && !pawn.has_moved && could_do_first_move {
-            out.0.push(double_move);
+    match double_move {
+        Ok(double_move)
+            if board.get(double_move).0.is_none() && !pawn.has_moved && could_do_first_move =>
+        {
+            out.0.push(double_move)
         }
+        _ => (),
     }
 
     // Check diagonal spaces if they can be attacked.
     for &diagonal in &[
-        BoardCoord(pos.0 + 1, pos.1 + color.direction()),
-        BoardCoord(pos.0 - 1, pos.1 + color.direction()),
+        BoardCoord::new((pos.0 + 1, pos.1 + color.direction())),
+        BoardCoord::new((pos.0 - 1, pos.1 + color.direction())),
     ] {
-        if on_board(diagonal) {
+        if let Ok(diagonal) = diagonal {
             match board.get(diagonal).0 {
                 Some(piece) if piece.color != color => out.0.push(diagonal),
                 _ => {}
@@ -1123,20 +1126,20 @@ fn check_line_of_sight_piece(
 ) {
     for los in line_of_sights {
         for delta in los {
-            let end_pos = BoardCoord(pos.0 + delta.0, pos.1 + delta.1 * color.direction());
+            let end_pos =
+                match BoardCoord::new((pos.0 + delta.0, pos.1 + delta.1 * color.direction())) {
+                    Ok(end_pos) => end_pos,
+                    Err(_) => break,
+                };
 
-            if !on_board(end_pos) {
-                break;
-            }
-
-            let end_piece = board.get(end_pos).0;
-            if end_piece.is_none() {
-                out.0.push(end_pos);
-            } else if let Some(piece) = end_piece {
-                if piece.color != color {
-                    out.0.push(end_pos);
+            match board.get(end_pos).0 {
+                None => out.0.push(end_pos),
+                Some(piece) => {
+                    if piece.color != color {
+                        out.0.push(end_pos);
+                    }
+                    break;
                 }
-                break;
             }
         }
     }
@@ -1226,23 +1229,6 @@ pub fn on_board(pos: BoardCoord) -> bool {
 /// Return true if `pos` would be actually on the board.
 pub fn on_board_i8(pos: (i8, i8)) -> bool {
     0 <= pos.0 && pos.0 < 8 && 0 <= pos.1 && pos.1 < 8
-}
-
-impl fmt::Display for MoveList {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for i in ROWS {
-            for j in COLS {
-                let coord = BoardCoord(j, 7 - i);
-                if self.0.contains(&coord) {
-                    write!(f, "## ")?;
-                } else {
-                    write!(f, ".. ")?;
-                }
-            }
-            writeln!(f, "")?;
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -1387,15 +1373,6 @@ impl Tile {
                 "Expected Tile to be Some piece, got None instead. set = {}",
                 set
             );
-        }
-    }
-
-    /// Set `just_lunged` flag on Pawn if the tile is a pawn. Else, do nothing.
-    pub fn set_just_lunged(&mut self, set: bool) {
-        if let Some(piece) = &mut self.0 {
-            if let PieceType::Pawn { just_lunged } = &mut piece.piece {
-                *just_lunged = set;
-            }
         }
     }
 
@@ -2092,7 +2069,7 @@ mod tests {
         let mut move_list = MoveList(Vec::new());
         for (y, row) in array.iter().enumerate() {
             for (x, tile) in (*row).split_whitespace().enumerate() {
-                if tile.starts_with("#") {
+                if tile.starts_with('#') {
                     move_list
                         .0
                         .push(BoardCoord(x as i8, ((array.len() - 1) - y) as i8));

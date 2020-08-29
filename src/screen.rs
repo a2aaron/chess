@@ -1,29 +1,32 @@
-use std::collections::BinaryHeap;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::time::{Duration, Instant};
-
-use crate::ai::*;
-use crate::board::*;
-use crate::layout::*;
-use crate::particle;
-use crate::rect::*;
-use crate::{ease, hstack, vstack};
 
 use rand::Rng;
 
 use ggez::event::{EventHandler, MouseButton};
 use ggez::graphics::{self, DrawParam, Rect, Text};
-use ggez::input;
 use ggez::mint;
 use ggez::nalgebra as na;
 use ggez::{Context, GameResult};
+
+use chess::ai::{AIPlayer, RandomPlayer, TreeSearchPlayer};
+use chess::board::{
+    move_type_coords, Board, BoardCoord, BoardState, CheckmateState, Color, MoveTypeCoords, Piece,
+    PieceType, BISHOP_STR, KNIGHT_STR, QUEEN_STR, ROOK_STR,
+};
+use chess::color;
+use chess::ease;
+use chess::layout::{FlexBox, HStack, Layout, VStack};
+use chess::particle;
+use chess::rect;
+use chess::ui::{self, Button, Selector, TextBox};
+use chess::{hstack, vstack};
 
 const PI: f32 = std::f32::consts::PI;
 
 pub const SCREEN_WIDTH: f32 = 800.0;
 pub const SCREEN_HEIGHT: f32 = 600.0;
 
-const DEBUG_LAYOUT: bool = false;
 const DEBUG_RESTART: bool = true;
 
 const DEFAULT_SCALE: f32 = 20.0;
@@ -34,38 +37,22 @@ const DEFAULT_ANIMATION_LENGTH: f32 = 0.22;
 const DEFAULT_PREDELAY: f32 = 0.3;
 const HARD_AI_MAX_DEPTH: usize = 6;
 
-#[allow(unused)]
-pub mod color {
-    use ggez::graphics::Color;
-    pub const RED: Color = Color::new(1.0, 0.0, 0.0, 1.0);
-    pub const YELLOW: Color = Color::new(1.0, 1.0, 0.0, 1.0);
-    pub const GREEN: Color = Color::new(0.0, 1.0, 0.0, 1.0);
-    pub const CYAN: Color = Color::new(0.0, 1.0, 1.0, 1.0);
-    pub const BLUE: Color = Color::new(0.0, 0.0, 1.0, 1.0);
-    pub const PURPLE: Color = Color::new(1.0, 0.0, 1.0, 1.0);
-    pub const WHITE: Color = Color::new(1.0, 1.0, 1.0, 1.0);
-    pub const LIGHT_GREY: Color = Color::new(0.5, 0.5, 0.5, 1.0);
-    pub const DARK_GREY: Color = Color::new(0.25, 0.25, 0.25, 1.0);
-    pub const BLACK: Color = Color::new(0.0, 0.0, 0.0, 1.0);
-    pub const TRANSPARENT: Color = Color::new(0.0, 0.0, 0.0, 0.0);
-    pub const TRANS_RED: Color = Color::new(1.0, 0.0, 0.0, 0.5);
-    pub const TRANS_YELLOW: Color = Color::new(1.0, 1.0, 0.0, 0.5);
-    pub const TRANS_GREEN: Color = Color::new(0.0, 1.0, 0.0, 0.5);
-    pub const TRANS_CYAN: Color = Color::new(0.0, 1.0, 1.0, 0.5);
-    pub const TRANS_BLUE: Color = Color::new(0.0, 0.0, 1.0, 0.5);
-    pub const TRANS_PURPLE: Color = Color::new(1.0, 0.0, 1.0, 0.5);
-}
-
+/// The entire game struct. This struct implements ggez's `EventHandler` and
+/// orchestrates howeverthing should work.
 #[derive(Debug)]
 pub struct Game {
+    /// which screen is currently active
     screen: ScreenState,
+    /// which screen to transition to
     transition: ScreenTransition,
     title_screen: TitleScreen,
     grid: Grid,
+    /// The extended context, containing image, font, and mouse data
     ext_ctx: ExtendedContext,
 }
 
 impl Game {
+    /// Create a new Game from the context. This loads a font.
     pub fn new(ctx: &mut Context) -> Game {
         let font = graphics::Font::new(ctx, std::path::Path::new("\\freeserif.ttf")).unwrap();
         let mut ext_ctx = ExtendedContext::new(ctx, font);
@@ -95,7 +82,7 @@ impl EventHandler for Game {
             ScreenTransition::QuitGame => ggez::event::quit(ctx),
             ScreenTransition::None => (),
         }
-        // Now that we have done it, we set out transition to none
+        // Now that we have done it, clear the transition state
         self.transition = ScreenTransition::None;
 
         match self.screen {
@@ -114,6 +101,7 @@ impl EventHandler for Game {
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx, graphics::BLACK);
+        // Mouse cursor
         let circle = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
@@ -134,9 +122,6 @@ impl EventHandler for Game {
             }
         }
 
-        // Draw the mouse
-        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
-
         // Debug Rects
         for (rect, color) in &self.ext_ctx.debug_render {
             if rect.x == DONTCARE || rect.y == DONTCARE {
@@ -151,13 +136,17 @@ impl EventHandler for Game {
         // FPS counter
         let text = format!("{:.0}", ggez::timer::fps(ctx));
         let location = na::Point2::new(SCREEN_WIDTH - 20.0, 0.0);
-        draw_text(
+        ui::draw_text(
             ctx,
             text,
             self.ext_ctx.font,
             DEFAULT_SCALE,
             (location, color::RED),
         )?;
+
+        // Draw the mouse cursor. Note that this is last so that we draw the
+        // mouse cursor over everything else
+        graphics::draw(ctx, &circle, (self.ext_ctx.mouse_state.pos,))?;
 
         graphics::present(ctx)
     }
@@ -197,12 +186,19 @@ impl EventHandler for Game {
         }
     }
 }
+
+/// This struct acts similarly to Context. It stores information that there should
+/// normally only be one of (such as fonts, mouse state, etc) and provides
+/// some useful debugging features.
 #[derive(Debug)]
 pub struct ExtendedContext {
     mouse_state: MouseState,
+    /// font for in game text
     font: graphics::Font,
     particles: Vec<particle::ParticleSystem>,
-    debug_render: Vec<(Rect, graphics::Color)>, // the debug rectangles. Rendered in red on top of everything else.
+    /// Debug rectangles. These are rendered in the chosen color on top of
+    /// everything else.
+    debug_render: Vec<(Rect, graphics::Color)>,
 }
 
 impl ExtendedContext {
@@ -216,11 +212,17 @@ impl ExtendedContext {
     }
 }
 
+/// An extension to ggez's MouseContext. It stores information such as the last
+/// mouse down and mouse up positions, as well as the current "drag" of the mouse.
 #[derive(Debug)]
 pub struct MouseState {
-    last_down: Option<mint::Point2<f32>>, // The position of the last mouse down, if it exists
-    last_up: Option<mint::Point2<f32>>,   // The position of the last mouse up, if it exists
-    dragging: Option<mint::Point2<f32>>,  // Some(coord) if the mouse is pressed, else None
+    // The position of the last mouse down, if it exists
+    last_down: Option<mint::Point2<f32>>,
+    // The position of the last mouse up, if it exists
+    last_up: Option<mint::Point2<f32>>,
+    // Some(coord) if the mouse is pressed, else None
+    dragging: Option<mint::Point2<f32>>,
+    // The current position of the mouse
     pos: mint::Point2<f32>,
 }
 
@@ -247,7 +249,7 @@ pub struct TitleScreen {
 impl TitleScreen {
     fn new(ctx: &mut Context, font: graphics::Font) -> TitleScreen {
         let mut title = TextBox::fit_to_text(ctx, text("CHESS", font, 60.0));
-        let mut upper_padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
+        let mut upper_padding = rect::from_dims((1.0, SCREEN_HEIGHT * 0.10));
 
         let buttons: Vec<Button> = vec![
             text("Human", font, 30.0),
@@ -259,7 +261,7 @@ impl TitleScreen {
         .collect();
 
         let mut black_selector = Selector::new(buttons.clone());
-        let mut white_selector = Selector::new(buttons.clone());
+        let mut white_selector = Selector::new(buttons);
 
         let mut white_selector_stack = VStack {
             pos: mint::Point2 { x: 0.0, y: 0.0 },
@@ -273,24 +275,22 @@ impl TitleScreen {
             min_dimensions: (None, None),
         };
 
-        let center_padding = FlexBox::new(1.0);
-        let mut center_padding2 = from_dims((30.0, 1.0));
-        // Unfortunately, Rust can't seem to infer the right type when the type is
-        // &mut dyn Layout for some reason.
+        // Unfortunately, Rust can't seem to infer the right type when the type
+        // is &mut dyn Layout for some reason, so we say it explicitly.
         let mut selector_stack: HStack<&mut dyn Layout> = hstack! {
             Some(SCREEN_WIDTH), None =>
-            center_padding.clone();
+            FlexBox::new(1.0);
             white_selector_stack;
-            center_padding2;
+            rect::from_dims((30.0, 1.0));
             black_selector_stack;
-            center_padding.clone();
+            FlexBox::new(1.0);
         };
 
-        let mut padding = from_dims((1.0, SCREEN_HEIGHT * 0.10));
+        let mut padding = rect::from_dims((1.0, SCREEN_HEIGHT * 0.10));
         let mut start_game =
             Button::fit_to_text(ctx, (300.0, 35.0), text("Start Game", font, 30.0));
         let mut quit_game = Button::fit_to_text(ctx, (300.0, 35.0), text("Quit Game", font, 30.0));
-        let mut padding2 = from_dims((1.0, 25.0));
+        let mut padding2 = rect::from_dims((1.0, 25.0));
 
         let mut vstack: VStack<&mut dyn Layout> = vstack! {
             Some(SCREEN_WIDTH), None =>
@@ -329,6 +329,7 @@ impl TitleScreen {
         mouse_pos: mint::Point2<f32>,
         screen_transition: &mut ScreenTransition,
     ) {
+        // On game start, get which AIs should be used
         if self.start_game.pressed(mouse_pos) {
             let white_ai: Option<Box<dyn AIPlayer>> = match self.white_selector.selected {
                 0 => None,
@@ -362,6 +363,7 @@ impl TitleScreen {
     }
 }
 
+/// Which screen the game should transition to.
 #[derive(Debug)]
 pub enum ScreenTransition {
     None,
@@ -370,6 +372,7 @@ pub enum ScreenTransition {
     QuitGame,
 }
 
+/// Which screen the game is current on.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ScreenState {
     TitleScreen,
@@ -443,6 +446,8 @@ impl Grid {
                 ),
                 status: TextBox::new((110.0, 100.0)),
                 promote_buttons,
+                dead_black_list: vec![],
+                dead_white_list: vec![],
                 dead_black: TextBox::new((110.0, 100.0)),
                 dead_white: TextBox::new((110.0, 100.0)),
             },
@@ -584,29 +589,30 @@ impl Grid {
                     ai.next_move(&self.board, self.board.current_player)
                 {
                     if self.time_since_last_move >= MIN_TIME_BETWEEN_MOVES {
-                        self.board.check_turn(start, end).expect(&format!(
-                            "{} AI made illegal move: ({:?}, {:?})\nboard:\n{:?}",
-                            self.board.current_player, start, end, self.board
-                        ));
-                        Self::take_turn(
-                            ctx,
-                            &mut self.board,
-                            &mut self.grid,
-                            &mut self.time_since_last_move,
-                            start,
-                            end,
-                        );
+                        self.board
+                            .check_turn(start, end)
+                            .expect("AI made an illegal move");
+                        self.take_turn(ctx, start, end);
                     }
                 }
+            }
+            // We have to do this reborrow here because rust can't seem to figure out
+            // the lifetimes otherwise (it complains that reusing `ai` down here would
+            // result in a double mutable borrow, so we do this to end the lifetime of
+            // `ai` early)
+            let ai = match self.board.current_player {
+                Color::White => &mut self.ai_white,
+                Color::Black => &mut self.ai_black,
+            };
+            if let Some(ai) = ai {
                 // If this move would require the AI to promote a piece, then ask
                 // the AI to promote the piece.
                 if let Some(coord) = self.board.need_promote() {
                     let piece = ai.next_promote(&self.board);
                     if let std::task::Poll::Ready(piece) = piece {
-                        self.board.check_promote(coord, piece).expect(&format!(
-                            "{} AI made illegal promote: {:?}\nboard:\n{:?}",
-                            self.board.current_player, piece, self.board
-                        ));
+                        self.board
+                            .check_promote(coord, piece)
+                            .expect("AI made an illegal promote");
                         Self::promote(&mut self.board, &mut self.grid, coord, piece);
                     }
                 }
@@ -641,24 +647,12 @@ impl Grid {
                     // On a mouse up, try moving the held piece to the current mouse position
                     let dragging = self.grid.to_grid_coord(mouse.last_down.unwrap());
                     let drop_loc = self.grid.to_grid_coord(mouse.pos);
-                    // This indicates that the mouse isn't actually holding a piece
-                    // or would be dropped outside of the grid
-                    if drop_loc.is_err() || dragging.is_err() {
-                        // do nothing, there's isn't an attempted move here
-                    } else {
-                        let start = dragging.unwrap();
-                        let end = drop_loc.unwrap();
+                    // If both the drag point and drop point are within the grid
+                    if let (Ok(start), Ok(end)) = (dragging, drop_loc) {
                         if self.board.check_turn(start, end).is_ok() {
                             // We don't ratelimit how fast humans can move since it's really unlikely they'll
                             // move too fast for the other player to see
-                            Self::take_turn(
-                                ctx,
-                                &mut self.board,
-                                &mut self.grid,
-                                &mut self.time_since_last_move,
-                                start,
-                                end,
-                            );
+                            self.take_turn(ctx, start, end);
                         }
                     }
                 }
@@ -695,21 +689,34 @@ impl Grid {
     }
 
     // Move the piece from start to end and update the last move/animation boards
-    fn take_turn(
-        _ctx: &mut Context,
-        board: &mut BoardState,
-        board_view: &mut BoardView,
-        time_since_last_move: &mut f32,
-        start: BoardCoord,
-        end: BoardCoord,
-    ) {
+    fn take_turn(&mut self, _ctx: &mut Context, start: BoardCoord, end: BoardCoord) {
+        // In the event of a capture, add the piece to the appropriate list
+        match move_type_coords(&self.board.board, start, end) {
+            MoveTypeCoords::Capture { end: capture, .. }
+            | MoveTypeCoords::EnPassant {
+                captured_pawn: capture,
+                ..
+            } => {
+                let piece = self
+                    .board
+                    .get(capture)
+                    .0
+                    .expect("Expected capture to have a piece");
+                match piece.color {
+                    Color::Black => self.sidebar.dead_black_list.push(piece.piece),
+                    Color::White => self.sidebar.dead_white_list.push(piece.piece),
+                }
+            }
+            _ => (),
+        }
+
         // Update the view first here because we want it to work off of the state
         // of board _before_ we make the actual move
-        board_view.take_turn(board, start, end);
-        board.take_turn(start, end);
+        self.grid.take_turn(&self.board, start, end);
+        self.board.take_turn(start, end);
 
         // Set the time since the last move so the AI does not move immediately.
-        *time_since_last_move = 0.0;
+        self.time_since_last_move = 0.0;
     }
 
     fn draw(&self, ctx: &mut Context, ext_ctx: &ExtendedContext) -> GameResult<()> {
@@ -995,7 +1002,7 @@ impl AnimatedBoard {
         let mut pieces = Vec::with_capacity(32);
         for i in 0..8 {
             for j in 0..8 {
-                let coord = BoardCoord(i, j);
+                let coord = BoardCoord::new((i, j)).expect("Expected a valid BoardCoord");
                 if let Some(piece) = board.get(coord).0 {
                     let end = to_screen_coord(square_size, coord);
                     let start = match piece.color {
@@ -1075,7 +1082,7 @@ impl AnimatedBoard {
         for piece in self.pieces.iter().filter(|piece| piece.alive) {
             piece.draw(ctx, ext_ctx, self.square_size)?;
         }
-        draw_text_workaround(ctx);
+        ui::draw_text_workaround(ctx);
         Ok(())
     }
 
@@ -1132,14 +1139,14 @@ impl AnimatedBoard {
         fn move_piece(coords: &mut HashMap<BoardCoord, usize>, start: BoardCoord, end: BoardCoord) {
             let id = coords
                 .remove(&start)
-                .expect(format!("Expected piece at {:?} got none", start).as_str());
+                .expect("HashMap did not contain piece--this is probably a desync earlier on");
             coords.insert(end, id);
         }
 
         fn remove(coords: &mut HashMap<BoardCoord, usize>, coord: BoardCoord) {
             coords
                 .remove(&coord)
-                .expect(format!("Expected piece at {:?} got none", coord).as_str());
+                .expect("HashMap did not contain piece--this is probably a desync earlier on");
         }
 
         use MoveTypeCoords::*;
@@ -1323,7 +1330,8 @@ struct GameSidebar {
     promote_buttons: Vec<(Button, PieceType)>,
     // Displays who's turn it is and if there is check/checkmate/etc or not
     status: TextBox,
-    // Lists the dead piece for each player.
+    dead_black_list: Vec<PieceType>,
+    dead_white_list: Vec<PieceType>,
     dead_black: TextBox,
     dead_white: TextBox,
 }
@@ -1346,8 +1354,16 @@ impl GameSidebar {
         };
         self.status.text = text(status_text, ext_ctx.font, 25.0);
 
-        self.dead_black.text = text(piece_vec_str(&board.dead_black), ext_ctx.font, 30.0);
-        self.dead_white.text = text(piece_vec_str(&board.dead_white), ext_ctx.font, 30.0);
+        self.dead_black.text = text(
+            piece_slice_to_str(&self.dead_black_list),
+            ext_ctx.font,
+            30.0,
+        );
+        self.dead_white.text = text(
+            piece_slice_to_str(&self.dead_white_list),
+            ext_ctx.font,
+            30.0,
+        );
 
         // Update buttons
         self.main_menu.upd8(ctx);
@@ -1386,197 +1402,8 @@ impl GameSidebar {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Button {
-    pub hitbox: Rect,
-    state: ButtonState,
-    pub text: TextBox,
-}
-
-impl Button {
-    /// Return a button whose size is at least large enough to fit both min_hitbox
-    /// and the text. If the text would be larger than min_hitbox, it is centered on top of
-    /// min_hitbox.
-    fn fit_to_text(ctx: &mut Context, min_dims: (f32, f32), text: Text) -> Button {
-        let (w, h) = text.dimensions(ctx);
-        let text_rect = from_dims((w as f32, h as f32));
-        let min_hitbox = from_dims(min_dims);
-        let hitbox = text_rect.combine_with(min_hitbox);
-
-        Button {
-            hitbox,
-            state: ButtonState::Idle,
-            text: TextBox {
-                bounding_box: text_rect,
-                text,
-            },
-        }
-    }
-
-    fn pressed(&self, mouse_pos: mint::Point2<f32>) -> bool {
-        self.state == ButtonState::Pressed && self.hitbox.contains(mouse_pos)
-    }
-
-    fn upd8(&mut self, ctx: &mut Context) {
-        let curr_pos = input::mouse::position(ctx);
-        let mouse_pressed = input::mouse::button_pressed(ctx, MouseButton::Left);
-        let over_button = self.hitbox.contains(curr_pos);
-        use ButtonState::*;
-        self.state = match (over_button, mouse_pressed) {
-            (false, _) => Idle,
-            (true, false) => Hover,
-            (true, true) => Pressed,
-        };
-    }
-
-    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
-        use ButtonState::*;
-        let outer_color = color::WHITE;
-        let inner_color = match self.state {
-            Idle => graphics::Color::from_rgb_u32(0x13ff00),
-            Hover => graphics::Color::from_rgb_u32(0x0ebf00),
-            Pressed => graphics::Color::from_rgb_u32(0x0c9f00),
-        };
-
-        self.draw_with_color(ctx, outer_color, inner_color)
-    }
-
-    fn draw_with_color(
-        &self,
-        ctx: &mut Context,
-        outer_color: graphics::Color,
-        inner_color: graphics::Color,
-    ) -> GameResult<()> {
-        let fill: graphics::DrawMode = graphics::DrawMode::fill();
-        let stroke_width = 3.0;
-        let stroke: graphics::DrawMode = graphics::DrawMode::stroke(stroke_width);
-
-        let dims = get_dims(self.hitbox);
-        let dest = self.hitbox.point();
-
-        // Button BG
-        let mut mesh = graphics::MeshBuilder::new();
-        mesh.rectangle(fill, dims, inner_color);
-
-        // Button Border
-        let bounds = Rect::new(
-            stroke_width / 2.0,
-            stroke_width / 2.0,
-            self.hitbox.w - stroke_width,
-            self.hitbox.h - stroke_width,
-        );
-        mesh.rectangle(stroke, bounds, outer_color);
-        let button = mesh.build(ctx).unwrap();
-
-        graphics::draw(ctx, &button, (dest,))?;
-
-        self.text.draw_with_color(ctx, color::BLACK)?;
-        Ok(())
-    }
-}
-
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-enum ButtonState {
-    Idle,
-    Hover,
-    Pressed,
-}
-
-#[derive(Debug)]
-pub struct Selector {
-    buttons: Vec<Button>,
-    selected: usize,
-}
-
-impl Selector {
-    fn new(buttons: Vec<Button>) -> Selector {
-        Selector {
-            buttons,
-            selected: 0,
-        }
-    }
-
-    fn upd8(&mut self, ctx: &mut Context) {
-        for (i, button) in &mut self.buttons.iter_mut().enumerate() {
-            button.upd8(ctx);
-            if button.state == ButtonState::Pressed {
-                self.selected = i;
-            }
-        }
-    }
-
-    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
-        for (i, button) in self.buttons.iter().enumerate() {
-            use ButtonState::*;
-            let outer_color = if i == self.selected {
-                graphics::Color::from_rgb_u32(0xE3F2FD)
-            } else {
-                color::WHITE
-            };
-            let inner_color = match (button.state, i) {
-                (Pressed, _) => graphics::Color::from_rgb_u32(0x2979FF),
-                (_, i) if i == self.selected => graphics::Color::from_rgb_u32(0x2962FF),
-                (Hover, _) => graphics::Color::from_rgb_u32(0x448AFF),
-                (Idle, _) => graphics::Color::from_rgb_u32(0x82B1FF),
-            };
-
-            button.draw_with_color(ctx, outer_color, inner_color)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TextBox {
-    pub bounding_box: Rect,
-    text: Text,
-}
-
-impl TextBox {
-    fn new(dims: (f32, f32)) -> TextBox {
-        TextBox {
-            bounding_box: from_dims(dims),
-            text: Text::default(),
-        }
-    }
-
-    fn fit_to_text(ctx: &mut Context, text: Text) -> TextBox {
-        let (w, h) = text.dimensions(ctx);
-        let bounding_box = from_dims((w as f32, h as f32));
-        TextBox { bounding_box, text }
-    }
-
-    fn draw_with_color(&self, ctx: &mut Context, color: graphics::Color) -> GameResult<()> {
-        // DEBUG
-        if DEBUG_LAYOUT {
-            let rect = &graphics::Mesh::new_rectangle(
-                ctx,
-                graphics::DrawMode::fill(),
-                self.bounding_box,
-                color::TRANS_CYAN,
-            )
-            .unwrap();
-            graphics::draw(ctx, rect, DrawParam::default())?;
-        }
-
-        let dims = (
-            self.text.dimensions(ctx).0 as f32,
-            self.text.dimensions(ctx).1 as f32,
-        );
-        let text_offset = center_inside(self.bounding_box, from_dims(dims).into());
-
-        graphics::draw(ctx, &self.text, (text_offset.point(), color))?;
-
-        draw_text_workaround(ctx);
-        Ok(())
-    }
-
-    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
-        self.draw_with_color(ctx, color::RED)
-    }
-}
-
-fn piece_vec_str(pieces: &Vec<Piece>) -> String {
+/// Convert a list of pieces to their string representation.
+fn piece_slice_to_str(pieces: &[PieceType]) -> String {
     let mut string = String::new();
     for (i, piece) in pieces.iter().enumerate() {
         string.push_str(piece.as_str());
@@ -1594,36 +1421,4 @@ where
     let mut text = graphics::Text::new(text);
     text.set_font(font, graphics::Scale::uniform(scale));
     text
-}
-
-// Draw some text using the font, scale, and parameters specified.
-fn draw_text<T, S>(
-    ctx: &mut Context,
-    text: T,
-    font: graphics::Font,
-    scale: f32,
-    params: S,
-) -> GameResult<()>
-where
-    T: Into<graphics::TextFragment>,
-    S: Into<DrawParam>,
-{
-    let mut text = graphics::Text::new(text);
-    let text = text.set_font(font, graphics::Scale::uniform(scale));
-    graphics::draw(ctx, text, params)?;
-
-    draw_text_workaround(ctx);
-    Ok(())
-}
-
-fn draw_text_workaround(ctx: &mut Context) {
-    // This workaround is nessecary because after a draw call with text,
-    // the DrawParam's dest is added to the next mesh draw.
-    // This results in bizarre flicker problems where the next mesh draw is
-    // displaced by the prior text draw's displacement. This fixes this issue
-    // by resyncronizing the transform, suggesting it might be a memory barrier problem.
-    // This issue started happened when I updated my Windows 10 laptop
-    // so I guess a graphics API's behavior changed in some way.
-    ggez::graphics::apply_transformations(ctx)
-        .expect("The Workaround Failed For Some Reason Oh God Oh Fuck");
 }

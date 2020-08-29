@@ -1,5 +1,10 @@
 use std::time::{Duration, Instant};
 
+/// A Tween is a struct which will smoothly interpolate over time a value
+/// between a specified start and end point according to some easing function.
+/// Under the hood, this works by using a start position and an offset which
+/// is slowly applied over time. Note that `upd8` must be called before accessing
+/// `pos`, as otherwise the value will be out of date.
 #[derive(Debug)]
 pub struct Tween<Position, Offset = Position> {
     ease: Ease,
@@ -16,6 +21,10 @@ where
     Offset: Copy,
     f32: std::ops::Mul<Offset, Output = Offset>,
 {
+    /// Create a tween using a start position and an offset. This is good for
+    /// types like na::Point2 and na::Vector2, as we can't directly add two points
+    /// but we can add a point and a vector. The tween's start time is set to
+    /// the current time upon creation.
     pub fn offset(
         ease: Ease,
         start: Position,
@@ -32,6 +41,9 @@ where
         }
     }
 
+    /// Update `pos` using the supplied current time. This is done so that you
+    /// can supply a common `now` across many tweens, which avoids doing many
+    /// costly (and basically identical) `Instant::now()` calls.
     pub fn upd8(&mut self, now: Instant) {
         let percent = (now - self.start_time)
             .div_duration_f32(self.duration)
@@ -44,6 +56,11 @@ impl<Position, Offset> Tween<Position, Offset>
 where
     Position: std::ops::Sub<Position, Output = Offset> + Copy,
 {
+    /// Create a new tween that interpolates `pos` between start and end. This
+    /// is good for directly interpolating, assuming that the `Position` type
+    /// supplied has `Sub<Output = Offset>`. This works well for most number types.
+    /// It will also happen to work for Point2 as Point2 happens to implement
+    /// `Sub<Output = Vector2>`.
     pub fn new(
         ease: Ease,
         start: Position,
@@ -61,6 +78,7 @@ where
     }
 }
 
+/// An enum representing an ease. `ease` expects a value in [0.0, 1.0].
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
 pub enum Ease {
@@ -78,6 +96,9 @@ pub enum Ease {
 }
 
 impl Ease {
+    /// Return the eased value of `x`, assuming `x` is in the range [0.0, 1.0]
+    /// This function does not clamp its output, so you should probably call
+    /// clamp if you end up passing a value of `x` that is outside [0.0, 1.0]
     fn ease(&self, x: f32) -> f32 {
         use Ease::*;
         match self {
@@ -116,8 +137,10 @@ impl Ease {
         }
     }
 
+    /// Helper method to interpolate an f32. `percent` should be in the range
+    /// [0.0, 1.0]. This method does not clamp its output.
     pub fn interpolate(&self, start: f32, end: f32, percent: f32) -> f32 {
         let percent = self.ease(percent);
-        return start * (1.0 - percent) + end * percent;
+        start * (1.0 - percent) + end * percent
     }
 }
